@@ -5,23 +5,23 @@
     <a href="#-%D0%B1%D0%B0%D0%B3%D0%B8-%D0%B8-%D0%BF%D1%80%D0%B5%D0%B4%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D1%8F">Баги и предложения</a> •
   </p>
   <p align="center">
-    <a href="https://github.com/askhab95soft/Xatabchik/releases" target="_blank">
-      <img alt="release" src="https://img.shields.io/github/v/release/askhab95soft/Xatabchik?label=release&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/releases" target="_blank">
+      <img alt="release" src="https://img.shields.io/github/v/release/Xatabchik/Xatabchik?label=release&style=flat-square">
     </a>
-    <a href="https://github.com/askhab95soft/Xatabchik/releases" target="_blank">
-      <img alt="downloads" src="https://img.shields.io/github/downloads/askhab95soft/Xatabchik/total?label=downloads&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/releases" target="_blank">
+      <img alt="downloads" src="https://img.shields.io/github/downloads/Xatabchik/Xatabchik/total?label=downloads&style=flat-square">
     </a>
-    <a href="https://github.com/askhab95soft/Xatabchik/blob/main/LICENSE" target="_blank">
-      <img alt="license" src="https://img.shields.io/github/license/askhab95soft/Xatabchik?label=license&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/blob/main/LICENSE" target="_blank">
+      <img alt="license" src="https://img.shields.io/github/license/Xatabchik/Xatabchik?label=license&style=flat-square">
     </a>
-    <a href="https://github.com/askhab95soft/Xatabchik/commits" target="_blank">
-      <img alt="last-commit" src="https://img.shields.io/github/last-commit/askhab95soft/Xatabchik?label=last%20commit&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/commits" target="_blank">
+      <img alt="last-commit" src="https://img.shields.io/github/last-commit/Xatabchik/Xatabchik?label=last%20commit&style=flat-square">
     </a>
-    <a href="https://github.com/askhab95soft/Xatabchik/issues" target="_blank">
-      <img alt="issues" src="https://img.shields.io/github/issues/askhab95soft/Xatabchik?label=issues&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/issues" target="_blank">
+      <img alt="issues" src="https://img.shields.io/github/issues/Xatabchik/Xatabchik?label=issues&style=flat-square">
     </a>
-    <a href="https://github.com/askhab95soft/Xatabchik/stargazers" target="_blank">
-      <img alt="stars" src="https://img.shields.io/github/stars/askhab95soft/Xatabchik?label=stars&style=flat-square">
+    <a href="https://github.com/Xatabchik/Xatabchik/stargazers" target="_blank">
+      <img alt="stars" src="https://img.shields.io/github/stars/Xatabchik/Xatabchik?label=stars&style=flat-square">
     </a>
     <a href="https://www.python.org/downloads/" target="_blank">
       <img alt="python" src="https://img.shields.io/badge/python-%E2%89%A53.10-blue?style=flat-square">
@@ -122,7 +122,7 @@
 2) Выполните:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/askhab95soft/Xatabchik/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/Xatabchik/Xatabchik/main/install.sh | bash
 ```
 
 3) Следуйте инструкциям установщика:
@@ -256,7 +256,7 @@ docker-compose up -d
 
 **Обновить до последней версии:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/askhab95soft/Xatabchik/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/Xatabchik/Xatabchik/main/install.sh | bash
 
 docker-compose down && docker-compose up -d --build
 ```
