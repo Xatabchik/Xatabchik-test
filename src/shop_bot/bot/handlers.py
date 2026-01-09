@@ -557,8 +557,8 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
         balance_str = str(balance_val)
 
     # Ссылки
-    channel_link = "https://t.me/SuperVPN95"
-    chat_link = "https://t.me/uprav_softmaster95vpn_bot"
+    channel_link = get_setting("channel_url")
+    chat_link = get_setting("chat_link")
 
     # Текст главного меню
     text = (
@@ -1145,8 +1145,8 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
         balance_str = str(balance_val)
 
     # Ссылки
-    channel_link = "https://t.me/SuperVPN95"
-    #chat_link = "https://t.me/uprav_softmaster95vpn_bot"
+    channel_link = get_setting("channel_url")
+    chat_link = get_setting("chat_link")
 
     # Текст главного меню
     text = (
@@ -1154,7 +1154,7 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
         f"<blockquote>—— ID: {user_id}\n"
         f"—— Баланс: {balance_str} ₽ RUB</blockquote>\n\n"
         f"📝 <a href=\"{channel_link}\">Наш канал</a> 📝\n\n"
-        #f"👉 <a href=\"{chat_link}\">Наш чат</a> 👉\n\n"
+        f"👉 <a href=\"{chat_link}\">Наш чат</a> 👉\n\n"
         f"🌐 Множество локаций\n"
         f"🚀 Скорость серверов 1 Гбит/с, смена IP\n"
         f"📊 Безлимитный трафик\n\n"
