@@ -598,8 +598,8 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
     username_safe = html_escape(str(username or "Пользователь"))
 
     # Ссылки (настраиваются в админке)
-    channel_link = (get_setting("channel_link") or "https://t.me/xatabvpn").strip()
-    chat_link = (get_setting("chat_link") or "https://t.me/+6kB4I-diSUEyY2Ey").strip()
+    channel_link = (get_setting("channel_link")).strip()
+    chat_link = (get_setting("chat_link")).strip()
     channel_link_safe = html_escape(channel_link, quote=True)
     chat_link_safe = html_escape(chat_link, quote=True)
 
