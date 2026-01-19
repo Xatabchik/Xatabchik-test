@@ -3,6 +3,7 @@ import logging
 import asyncio
 import threading
 import json
+import sqlite3
 import hashlib
 import hmac
 import bcrypt
@@ -10,7 +11,6 @@ import html as html_escape
 import base64
 import time
 import uuid
-from decimal import Decimal
 from hmac import compare_digest
 from datetime import datetime, timezone, timedelta
 from functools import wraps
@@ -54,7 +54,9 @@ from shop_bot.data_manager.remnawave_repository import (
     get_users_paginated, get_keys_counts_for_users,
 
     get_all_ssh_targets, get_ssh_target, create_ssh_target, update_ssh_target_fields, delete_ssh_target,
-    get_user
+    get_user,
+    get_admin_stats,
+    list_gift_tokens,
 )
 from shop_bot.data_manager.database import (
     get_button_configs, create_button_config, update_button_config, 
@@ -541,6 +543,238 @@ def create_webhook_app(bot_controller_instance):
     def dashboard_charts_json():
         data = get_daily_stats_for_charts(days=30)
         return jsonify(data)
+
+
+    @flask_app.route('/statistics')
+    @login_required
+    def statistics_page():
+        """Страница статистики (обзор)."""
+        # Hosts / servers
+        try:
+            hosts = get_all_hosts() or []
+        except Exception:
+            hosts = []
+
+        servers_total = len(hosts)
+        servers_active = 0
+        for h in hosts:
+            try:
+                servers_active += 1 if int(h.get('is_active', 1) or 0) == 1 else 0
+            except Exception:
+                servers_active += 1
+        servers_disabled = max(0, servers_total - servers_active)
+
+        # Admin stats
+        try:
+            a = get_admin_stats() or {}
+        except Exception:
+            a = {}
+
+        clients_total = int(a.get('total_users') or 0)
+        clients_today_new = int(a.get('today_new_users') or 0)
+
+        # Active clients = users having at least one non-expired key
+        clients_active = 0
+        try:
+            db_path = str(rw_repo.database.DB_FILE)
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT user_id)
+                    FROM vpn_keys
+                    WHERE expire_at IS NULL
+                       OR datetime(expire_at) > CURRENT_TIMESTAMP
+                    """
+                )
+                row = cur.fetchone()
+                clients_active = int(row[0] or 0) if row else 0
+        except Exception:
+            clients_active = 0
+        clients_no_sub = max(0, clients_total - clients_active)
+
+        # Payments (transactions)
+        payments_total = 0
+        payments_sum = 0.0
+        payments_today = 0
+        payments_today_sum = 0.0
+        try:
+            db_path = str(rw_repo.database.DB_FILE)
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT COUNT(*), COALESCE(SUM(amount_rub), 0)
+                    FROM transactions
+                    WHERE status IN ('paid','success','succeeded')
+                      AND LOWER(COALESCE(payment_method, '')) <> 'balance'
+                    """
+                )
+                row = cur.fetchone() or (0, 0)
+                payments_total = int(row[0] or 0)
+                payments_sum = float(row[1] or 0.0)
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*), COALESCE(SUM(amount_rub), 0)
+                    FROM transactions
+                    WHERE status IN ('paid','success','succeeded')
+                      AND date(created_date) = date('now')
+                      AND LOWER(COALESCE(payment_method, '')) <> 'balance'
+                    """
+                )
+                row = cur.fetchone() or (0, 0)
+                payments_today = int(row[0] or 0)
+                payments_today_sum = float(row[1] or 0.0)
+        except Exception:
+            pass
+
+        # Referrals
+        referrals_total = 0
+        referrals_today = 0
+        try:
+            db_path = str(rw_repo.database.DB_FILE)
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL")
+                referrals_total = int((cur.fetchone() or [0])[0] or 0)
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE referred_by IS NOT NULL
+                      AND date(registration_date) = date('now')
+                    """
+                )
+                referrals_today = int((cur.fetchone() or [0])[0] or 0)
+        except Exception:
+            pass
+
+        # Gifts
+        gifts_total = 0
+        gifts_used = 0
+        gifts_activations = 0
+        try:
+            tokens = list_gift_tokens(active_only=False) or []
+            gifts_total = len(tokens)
+            for t in tokens:
+                try:
+                    gifts_used += int(t.get('activations_used') or 0)
+                except Exception:
+                    pass
+                try:
+                    gifts_activations += int(t.get('activation_limit') or 1)
+                except Exception:
+                    gifts_activations += 1
+        except Exception:
+            pass
+
+        metrics = {
+            'clients_total': clients_total,
+            'clients_active': clients_active,
+            'clients_no_sub': clients_no_sub,
+            'clients_today_new': clients_today_new,
+            'payments_total': payments_total,
+            'payments_sum': payments_sum,
+            'payments_today': payments_today,
+            'payments_today_sum': payments_today_sum,
+            'referrals_total': referrals_total,
+            'referrals_today': referrals_today,
+            'servers_total': servers_total,
+            'servers_active': servers_active,
+            'servers_disabled': servers_disabled,
+            'gifts_total': gifts_total,
+            'gifts_used': gifts_used,
+            'gifts_activations': gifts_activations,
+        }
+
+        # Charts
+        daily = get_daily_stats_for_charts(days=30) or {'users': {}, 'keys': {}}
+
+        from datetime import date
+        def _labels(days: int) -> list[str]:
+            today = date.today()
+            return [(today - timedelta(days=i)).isoformat() for i in reversed(range(days))]
+
+        labels30 = _labels(30)
+        labels7 = _labels(7)
+
+        payments_map: dict[str, float] = {}
+        referrals_map: dict[str, int] = {}
+        plans_labels: list[str] = []
+        plans_values: list[int] = []
+        try:
+            db_path = str(rw_repo.database.DB_FILE)
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+
+                # Payments series (last 7 days)
+                cur.execute(
+                    """
+                    SELECT date(created_date) AS day, COALESCE(SUM(amount_rub), 0)
+                    FROM transactions
+                    WHERE status IN ('paid','success','succeeded')
+                      AND date(created_date) >= date('now', '-6 days')
+                      AND LOWER(COALESCE(payment_method, '')) <> 'balance'
+                    GROUP BY day
+                    ORDER BY day
+                    """
+                )
+                for day, total in cur.fetchall() or []:
+                    payments_map[str(day)] = float(total or 0.0)
+
+                # Referrals series (last 30 days)
+                cur.execute(
+                    """
+                    SELECT date(registration_date) AS day, COUNT(*)
+                    FROM users
+                    WHERE referred_by IS NOT NULL
+                      AND date(registration_date) >= date('now', '-29 days')
+                    GROUP BY day
+                    ORDER BY day
+                    """
+                )
+                for day, cnt in cur.fetchall() or []:
+                    referrals_map[str(day)] = int(cnt or 0)
+
+                # Plans popularity (all time, based on metadata.plan_name)
+                cur.execute(
+                    """
+                    SELECT metadata
+                    FROM transactions
+                    WHERE status IN ('paid','success','succeeded')
+                    """
+                )
+                counts: dict[str, int] = {}
+                for (meta,) in cur.fetchall() or []:
+                    if not meta:
+                        name = 'N/A'
+                    else:
+                        try:
+                            m = json.loads(meta)
+                            name = (m.get('plan_name') or 'N/A')
+                        except Exception:
+                            name = 'N/A'
+                    name = str(name).strip() or 'N/A'
+                    counts[name] = counts.get(name, 0) + 1
+                top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+                plans_labels = [k for k, _ in top]
+                plans_values = [v for _, v in top]
+        except Exception:
+            pass
+
+        chart_data = {
+            'users': daily.get('users') or {},
+            'keys': daily.get('keys') or {},
+            'payments': payments_map,
+            'referrals': referrals_map,
+            'plans': {'labels': plans_labels, 'values': plans_values},
+            'labels30': labels30,
+            'labels7': labels7,
+        }
+
+        common_data = get_common_template_data()
+        return render_template('statistics.html', metrics=metrics, chart_data=chart_data, **common_data)
 
 
     @flask_app.route('/monitor')
@@ -2376,13 +2610,8 @@ def create_webhook_app(bot_controller_instance):
                 try:
                     expected_amount = Decimal(str(pending_meta.get('price') or pending_meta.get('amount_rub') or '0')).quantize(Decimal('0.01'))
                     got_amount = Decimal(value_str).quantize(Decimal('0.01'))
-                except Exception as e:
-                    # Не падаем: просто не сможем выполнить сверку суммы.
-                    # Ранее здесь часто случался NameError из-за отсутствующего импорта Decimal.
-                    logger.warning(
-                        f"YooKassa webhook: amount parse error for payment_id={internal_payment_id}: value={value_str}; err={e}",
-                        exc_info=True,
-                    )
+                except Exception:
+                    logger.warning(f"YooKassa webhook: amount parse error for payment_id={internal_payment_id}: value={value_str}")
                     return 'OK', 200
 
                 if currency and currency != 'RUB':

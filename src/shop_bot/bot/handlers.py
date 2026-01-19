@@ -9,6 +9,8 @@ import json
 import base64
 import asyncio
 
+from html import escape as html_escape
+
 from urllib.parse import urlencode
 from hmac import compare_digest
 from functools import wraps
@@ -78,6 +80,7 @@ from shop_bot.config import (
 )
 from shop_bot.data_manager import remnawave_repository as rw_repo
 from shop_bot.data_manager import database
+from shop_bot.factory_bot.runtime import get_service
 from shop_bot.modules import remnawave_api
 from shop_bot.data_manager.database import get_latest_pending_for_user, get_user_by_username
 from shop_bot.data_manager.database import delete_key_by_id
@@ -529,6 +532,20 @@ class SupportDialog(StatesGroup):
     waiting_for_message = State()
     waiting_for_reply = State()
 
+
+# =============================
+# Franchise (managed clone bots)
+# =============================
+
+TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{20,}$")
+
+
+class FranchiseStates(StatesGroup):
+    waiting_bot_token = State()
+    waiting_withdraw_amount = State()
+    waiting_requisites_bank = State()
+    waiting_requisites_value = State()
+
 def is_valid_email(email: str) -> bool:
     pattern = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
     return re.match(pattern, email) is not None
@@ -578,9 +595,13 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
     except Exception:
         balance_str = str(balance_val)
 
+    username_safe = html_escape(str(username or "Пользователь"))
+
     # Ссылки (настраиваются в админке)
-    channel_link = (get_setting("channel_link") or "https://t.me/").strip()
-    chat_link = (get_setting("chat_link") or "https://t.me/").strip()
+    channel_link = (get_setting("channel_link") or "https://t.me/xatabvpn").strip()
+    chat_link = (get_setting("chat_link") or "https://t.me/+6kB4I-diSUEyY2Ey").strip()
+    channel_link_safe = html_escape(channel_link, quote=True)
+    chat_link_safe = html_escape(chat_link, quote=True)
 
     # Текст главного меню
     promo_text = (get_setting("main_menu_promo_text") or "").strip()
@@ -592,19 +613,49 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
             "Спасибо, что вы с нами!"
         )
     text = (
-        f"<b>👤 Профиль: {username}</b>\n\n"
+        f"<b>👤 Профиль: {username_safe}</b>\n\n"
         f"<blockquote>—— ID: {user_id}\n"
         f"—— Баланс: {balance_str} ₽ RUB</blockquote>\n\n"
-        f"📝 <a href=\"{channel_link}\">Наш канал</a> 📝\n"
-        f"👉 <a href=\"{chat_link}\">Наш чат</a> 👉\n\n"
+        f"📝 <a href=\"{channel_link_safe}\">Наш канал</a> 📝\n"
+        f"👉 <a href=\"{chat_link_safe}\">Наш чат</a> 👉\n\n"
         f"{promo_text}"
     )
 
+    # Franchise: determine whether this is a managed clone and whether the current user is its owner
+    factory_bot_id = 0
     try:
-        keyboard = keyboards.create_dynamic_main_menu_keyboard(user_keys, trial_available, is_admin_flag)
+        factory_bot_id = rw_repo.resolve_factory_bot_id(getattr(message.bot, "id", None))
+    except Exception:
+        factory_bot_id = 0
+
+    show_partner_cabinet = False
+    if factory_bot_id > 0:
+        try:
+            info = rw_repo.get_managed_bot(factory_bot_id) or {}
+            owner_id = int(info.get("owner_telegram_id") or 0)
+            show_partner_cabinet = (owner_id == int(user_id))
+        except Exception:
+            show_partner_cabinet = False
+
+    show_create_bot = factory_bot_id <= 0
+
+    try:
+        keyboard = keyboards.create_dynamic_main_menu_keyboard(
+            user_keys,
+            trial_available,
+            is_admin_flag,
+            show_create_bot=show_create_bot,
+            show_partner_cabinet=show_partner_cabinet,
+        )
     except Exception as e:
         logger.warning(f"Не удалось создать динамическую клавиатуру, используем статическую: {e}")
-        keyboard = keyboards.create_main_menu_keyboard(user_keys, trial_available, is_admin_flag)
+        keyboard = keyboards.create_main_menu_keyboard(
+            user_keys,
+            trial_available,
+            is_admin_flag,
+            show_create_bot=show_create_bot,
+            show_partner_cabinet=show_partner_cabinet,
+        )
 
     if edit_message:
         try:
@@ -797,7 +848,7 @@ def get_user_router() -> Router:
 
         if user_data and user_data.get('agreed_to_terms'):
             await message.answer(
-                f"👋 Снова здравствуйте, {html.bold(message.from_user.full_name)}!",
+                f"👋 Снова здравствуйте, <b>{html_escape(str(message.from_user.full_name or 'Пользователь'))}</b>!",
                 reply_markup=keyboards.main_reply_keyboard
             )
             await show_main_menu(message)
@@ -905,7 +956,7 @@ def get_user_router() -> Router:
         if not user_db_data:
             await callback.answer("Не удалось получить данные профиля.", show_alert=True)
             return
-        username = html.bold(user_db_data.get('username', 'Пользователь'))
+        username = html_escape(str(user_db_data.get('username', 'Пользователь') or 'Пользователь'))
         total_spent, total_months = user_db_data.get('total_spent', 0), user_db_data.get('total_months', 0)
         now = datetime.now()
         active_keys = [key for key in user_keys if datetime.fromisoformat(key['expiry_date']) > now]
@@ -2296,9 +2347,14 @@ def get_user_router() -> Router:
 
         # 4) Последняя попытка: пройтись по всем ключам и найти пейджер/список с hwid/devices
         # (помогает при неожиданных изменениях схемы ответа)
+        #
+        # Важно: не путать количество устройств с лимитом устройств.
+        # В ответах Remnawave часто встречаются поля вроде `hwidDeviceLimit`/`device_limit`,
+        # и если их ошибочно принять за количество подключённых устройств — на экране
+        # будет показываться лимит вместо фактического числа подключений.
         for k, v in user_payload.items():
             lk = str(k).lower()
-            if "hwid" in lk or "device" in lk:
+            if ("hwid" in lk or "device" in lk) and not any(x in lk for x in ("limit", "max", "quota")):
                 cnt = _count_from_value(v)
                 if isinstance(cnt, int) and cnt > 0:
                     return cnt
@@ -2367,9 +2423,12 @@ def get_user_router() -> Router:
                         return c
 
                 # fallback scan
+                # (но не путаем лимиты устройств с количеством подключённых устройств)
                 for k, v in val.items():
                     lk = str(k).lower()
-                    if "hwid" in lk or "device" in lk or lk in ("data", "items", "list", "rows"):
+                    if ("hwid" in lk or "device" in lk or lk in ("data", "items", "list", "rows")) and not any(
+                        x in lk for x in ("limit", "max", "quota")
+                    ):
                         c = _count_any(v)
                         if c:
                             return c
@@ -4346,6 +4405,582 @@ def get_user_router() -> Router:
         
         await message.reply("✅ Подарочный ключ создан для пользователя @{}\nКлюч уже активен в панели, пользователь сможет подключиться сразу.".format(text))
 
+
+    # =============================
+    # Franchise (clone bots)
+    # =============================
+
+    def _kb_cancel_factory() -> types.InlineKeyboardMarkup:
+        b = InlineKeyboardBuilder()
+        b.button(text="❌ Отмена", callback_data="factory_cancel")
+        b.adjust(1)
+        return b.as_markup()
+
+    def _kb_partner_cabinet() -> types.InlineKeyboardMarkup:
+        b = InlineKeyboardBuilder()
+        b.button(text="💳 Реквизиты", callback_data="partner_requisites")
+        b.button(text="💸 Вывод средств", callback_data="partner_withdraw")
+        b.button(text=(get_setting("btn_back_to_menu_text") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
+        b.adjust(1, 1, 1)
+        return b.as_markup()
+
+    def _kb_partner_withdraw() -> types.InlineKeyboardMarkup:
+        b = InlineKeyboardBuilder()
+        b.button(text="❌ Отмена", callback_data="partner_withdraw_cancel")
+        b.adjust(1)
+        return b.as_markup()
+
+
+    def _kb_partner_requisites(items: list[dict] | None = None) -> types.InlineKeyboardMarkup:
+        b = InlineKeyboardBuilder()
+        b.button(text="➕ Добавить карту", callback_data="partner_requisite_add")
+        items = items or []
+        # One row per action to keep callback_data short and stable
+        for r in items[:20]:
+            rid = int(r.get("id") or 0)
+            if rid <= 0:
+                continue
+            is_def = int(r.get("is_default") or 0) == 1
+            if not is_def:
+                b.button(text=f"✅ Сделать основной #{rid}", callback_data=f"req_set_default:{rid}")
+            b.button(text=f"🗑 Удалить #{rid}", callback_data=f"req_delete:{rid}")
+        b.button(text="⬅️ Назад", callback_data="partner_cabinet")
+        b.adjust(1)
+        return b.as_markup()
+
+    def _kb_partner_requisite_input() -> types.InlineKeyboardMarkup:
+        b = InlineKeyboardBuilder()
+        b.button(text="❌ Отмена", callback_data="partner_requisite_cancel")
+        b.adjust(1)
+        return b.as_markup()
+
+    def _mask_requisite(value: str, rtype: str) -> str:
+        s = (value or '').strip()
+        digits = ''.join(ch for ch in s if ch.isdigit())
+        if not digits:
+            return s
+        last4 = digits[-4:]
+        masked = '*' * max(0, len(digits) - 4) + last4
+        # group in 4s for cards
+        if (rtype or '').lower() == 'card' and len(digits) >= 12:
+            parts = [masked[max(0, i-4):i] for i in range(len(masked), 0, -4)]
+            masked = ' '.join(reversed(parts))
+        return masked
+
+    def _infer_requisite_type(value: str) -> str:
+        digits = ''.join(ch for ch in (value or '') if ch.isdigit())
+        # heuristic: 10-12 digits - чаще телефон, 13-19 - чаще карта
+        if 10 <= len(digits) <= 12:
+            return 'phone'
+        if 13 <= len(digits) <= 19:
+            return 'card'
+        # fallback
+        return 'card'
+
+    @user_router.callback_query(F.data == "partner_requisites")
+    @catch_callback_errors
+    async def partner_requisites(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        try:
+            await state.clear()
+        except Exception:
+            pass
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        if bot_id <= 0:
+            await cb.answer("Реквизиты доступны только в клонах.", show_alert=True)
+            return
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(cb.from_user.id) != owner_id:
+            await cb.answer("Доступно только владельцу.", show_alert=True)
+            return
+
+        items = rw_repo.list_partner_requisites(bot_id, owner_id) or []
+        lines = ["💳 <b>Реквизиты</b>", ""]
+        if not items:
+            lines.append("Пока нет привязанных реквизитов.")
+            lines.append("Нажмите <b>«Добавить карту»</b> и укажите банк и номер карты или телефона.")
+        else:
+            for i, r in enumerate(items, 1):
+                bank = html_escape(str(r.get('bank') or ''))
+                rtype = (r.get('requisite_type') or 'card')
+                label = 'Номер карты' if rtype == 'card' else 'Телефон'
+                masked = html_escape(_mask_requisite(str(r.get('requisite_value') or ''), str(rtype)))
+                star = '⭐ ' if int(r.get('is_default') or 0) == 1 else ''
+                lines.append(f"{star}<b>{i}.</b> {bank} — {label}: <code>{masked}</code> (id={r.get('id')})")
+        text = "\n".join(lines)
+        await cb.message.edit_text(text, reply_markup=_kb_partner_requisites(items), disable_web_page_preview=True)
+        await fast_callback_answer(cb)
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "partner_requisite_add")
+    @catch_callback_errors
+    async def partner_requisite_add(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        if bot_id <= 0:
+            await cb.answer("Доступно только в клонах.", show_alert=True)
+            return
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(cb.from_user.id) != owner_id:
+            await cb.answer("Только владелец.", show_alert=True)
+            return
+
+        await state.set_state(FranchiseStates.waiting_requisites_bank)
+        await cb.message.edit_text(
+            "🏦 <b>Добавление реквизитов</b>\n\nВведите название банка (например: <code>Тинькофф</code>):",
+            reply_markup=_kb_partner_requisite_input(),
+        )
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "partner_requisite_cancel")
+    @catch_callback_errors
+    async def partner_requisite_cancel(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        try:
+            await state.clear()
+        except Exception:
+            pass
+        try:
+            await partner_requisites(cb, state, bot)
+        except Exception:
+            try:
+                await partner_cabinet(cb, bot)
+            except Exception:
+                pass
+        await fast_callback_answer(cb)
+
+    @user_router.message(FranchiseStates.waiting_requisites_bank)
+    @registration_required
+    async def partner_requisite_bank(message: types.Message, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(message.from_user.id) != owner_id:
+            await message.answer("Только владелец.")
+            try:
+                await state.clear()
+            except Exception:
+                pass
+            return
+
+        bank = (message.text or '').strip()
+        if not bank:
+            await message.answer("Укажите банк текстом.")
+            return
+        await state.update_data(req_bank=bank)
+        await state.set_state(FranchiseStates.waiting_requisites_value)
+        await message.answer(
+            "💳 Теперь пришлите <b>номер карты</b> или <b>номер телефона</b> (как удобно):",
+            reply_markup=_kb_partner_requisite_input(),
+        )
+
+    @user_router.message(FranchiseStates.waiting_requisites_value)
+    @registration_required
+    async def partner_requisite_value(message: types.Message, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(message.from_user.id) != owner_id:
+            await message.answer("Только владелец.")
+            try:
+                await state.clear()
+            except Exception:
+                pass
+            return
+
+        data = await state.get_data()
+        bank = (data.get('req_bank') or '').strip()
+        value = (message.text or '').strip()
+        if not bank:
+            await message.answer("Не вижу банк. Попробуйте ещё раз.")
+            await state.set_state(FranchiseStates.waiting_requisites_bank)
+            return
+        if not value:
+            await message.answer("Укажите номер карты или телефона.")
+            return
+
+        rtype = _infer_requisite_type(value)
+        ok, msg, _new_id = rw_repo.add_partner_requisite(bot_id, owner_id, bank, value, rtype)
+        await message.answer(("✅ " if ok else "❌ ") + msg)
+        try:
+            await state.clear()
+        except Exception:
+            pass
+
+        # show list
+        items = rw_repo.list_partner_requisites(bot_id, owner_id) or []
+        lines = ["💳 <b>Реквизиты</b>", ""]
+        if not items:
+            lines.append("Пока нет привязанных реквизитов.")
+        else:
+            for i, r in enumerate(items, 1):
+                bank_e = html_escape(str(r.get('bank') or ''))
+                rt = (r.get('requisite_type') or 'card')
+                label = 'Номер карты' if rt == 'card' else 'Телефон'
+                masked = html_escape(_mask_requisite(str(r.get('requisite_value') or ''), str(rt)))
+                star = '⭐ ' if int(r.get('is_default') or 0) == 1 else ''
+                lines.append(f"{star}<b>{i}.</b> {bank_e} — {label}: <code>{masked}</code> (id={r.get('id')})")
+        await message.answer("\n".join(lines), reply_markup=_kb_partner_requisites(items))
+
+    @user_router.callback_query(F.data.startswith("req_set_default:"))
+    @catch_callback_errors
+    async def partner_requisite_set_default(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if bot_id <= 0 or int(cb.from_user.id) != owner_id:
+            await cb.answer("Недостаточно прав.", show_alert=True)
+            return
+        try:
+            rid = int((cb.data or '').split(':', 1)[1])
+        except Exception:
+            await cb.answer("Некорректные данные.", show_alert=True)
+            return
+        ok, msg = rw_repo.set_default_partner_requisite(rid, bot_id, owner_id)
+        await cb.answer(("✅ " if ok else "❌ ") + msg, show_alert=not ok)
+        # refresh
+        items = rw_repo.list_partner_requisites(bot_id, owner_id) or []
+        try:
+            await partner_requisites(cb, state, bot)
+        except Exception:
+            # rebuild text quickly
+            lines = ["💳 <b>Реквизиты</b>", ""]
+            for i, r in enumerate(items, 1):
+                bank_e = html_escape(str(r.get('bank') or ''))
+                rt = (r.get('requisite_type') or 'card')
+                label = 'Номер карты' if rt == 'card' else 'Телефон'
+                masked = html_escape(_mask_requisite(str(r.get('requisite_value') or ''), str(rt)))
+                star = '⭐ ' if int(r.get('is_default') or 0) == 1 else ''
+                lines.append(f"{star}<b>{i}.</b> {bank_e} — {label}: <code>{masked}</code> (id={r.get('id')})")
+            await cb.message.edit_text("\n".join(lines), reply_markup=_kb_partner_requisites(items), disable_web_page_preview=True)
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data.startswith("req_delete:"))
+    @catch_callback_errors
+    async def partner_requisite_delete(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if bot_id <= 0 or int(cb.from_user.id) != owner_id:
+            await cb.answer("Недостаточно прав.", show_alert=True)
+            return
+        try:
+            rid = int((cb.data or '').split(':', 1)[1])
+        except Exception:
+            await cb.answer("Некорректные данные.", show_alert=True)
+            return
+        ok, msg = rw_repo.delete_partner_requisite(rid, bot_id, owner_id)
+        await cb.answer(("✅ " if ok else "❌ ") + msg, show_alert=not ok)
+        # refresh list
+        items = rw_repo.list_partner_requisites(bot_id, owner_id) or []
+        lines = ["💳 <b>Реквизиты</b>", ""]
+        if not items:
+            lines.append("Пока нет привязанных реквизитов.")
+        else:
+            for i, r in enumerate(items, 1):
+                bank_e = html_escape(str(r.get('bank') or ''))
+                rt = (r.get('requisite_type') or 'card')
+                label = 'Номер карты' if rt == 'card' else 'Телефон'
+                masked = html_escape(_mask_requisite(str(r.get('requisite_value') or ''), str(rt)))
+                star = '⭐ ' if int(r.get('is_default') or 0) == 1 else ''
+                lines.append(f"{star}<b>{i}.</b> {bank_e} — {label}: <code>{masked}</code> (id={r.get('id')})")
+        await cb.message.edit_text("\n".join(lines), reply_markup=_kb_partner_requisites(items), disable_web_page_preview=True)
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "factory_create_bot")
+    @catch_callback_errors
+    async def franchise_create_bot(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        # Creation is allowed only from the root bot UI
+        try:
+            current_bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        except Exception:
+            current_bot_id = 0
+        if current_bot_id > 0:
+            await cb.answer("Создание бота доступно только в основном боте.", show_alert=True)
+            return
+
+        text = (
+            "🤖 <b>Отправьте Token вашего бота</b>\n\n"
+            "1. Перейдите в @BotFather\n"
+            "2. Создайте нового бота (/newbot)\n"
+            "3. Скопируйте API TOKEN\n"
+            "4. Пришлите его в этот чат сообщением 👇"
+        )
+        await state.set_state(FranchiseStates.waiting_bot_token)
+        try:
+            await cb.message.edit_text(text, reply_markup=_kb_cancel_factory())
+        except Exception:
+            await cb.message.answer(text, reply_markup=_kb_cancel_factory())
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "factory_cancel")
+    @catch_callback_errors
+    async def franchise_cancel(cb: types.CallbackQuery, state: FSMContext):
+        try:
+            await state.clear()
+        except Exception:
+            pass
+        try:
+            await show_main_menu(cb.message, edit_message=True)
+        except Exception:
+            pass
+        await fast_callback_answer(cb)
+
+    @user_router.message(FranchiseStates.waiting_bot_token)
+    @registration_required
+    async def franchise_receive_token(message: types.Message, state: FSMContext, bot: Bot):
+        token = (message.text or "").strip()
+        if not TOKEN_RE.match(token):
+            await message.answer("Похоже, это не токен. Пришлите токен в формате <code>123456:ABC...</code>.")
+            return
+
+        # Validate token
+        try:
+            tmp_bot = Bot(token=token)
+            me = await tmp_bot.get_me()
+            try:
+                await tmp_bot.close()
+            except Exception:
+                try:
+                    await tmp_bot.session.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Token validation failed: {e}")
+            await message.answer("Не получилось проверить токен. Убедитесь, что он правильный и бот не заблокирован.")
+            return
+
+        ok, msg, new_bot_id = rw_repo.create_managed_bot(
+            token=token,
+            telegram_bot_user_id=me.id,
+            username=getattr(me, "username", None),
+            owner_telegram_id=message.from_user.id,
+            referrer_bot_id=0,
+        )
+        if not ok or not new_bot_id:
+            await message.answer(f"❌ {msg}")
+            try:
+                await state.clear()
+            except Exception:
+                pass
+            return
+
+        # Start the new bot immediately (if service is running)
+        service = get_service()
+        if service:
+            try:
+                await service.start_bot(new_bot_id)
+            except Exception as e:
+                logger.warning(f"Failed to start managed bot {new_bot_id}: {e}")
+
+        uname = f"@{me.username}" if getattr(me, "username", None) else f"(id {me.id})"
+        await message.answer(
+            f"✅ Бот {uname} подключён.\n\n"
+            "Откройте его и нажмите /start — у владельца появится кнопка «Личный кабинет»."
+        )
+        try:
+            await state.clear()
+        except Exception:
+            pass
+
+        # Return user to main menu
+        try:
+            await show_main_menu(message)
+        except Exception:
+            pass
+
+    @user_router.callback_query(F.data == "partner_cabinet")
+    @catch_callback_errors
+    async def partner_cabinet(cb: types.CallbackQuery, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        if bot_id <= 0:
+            await cb.answer("Кабинет доступен только в клонах.", show_alert=True)
+            return
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(cb.from_user.id) != owner_id:
+            await cb.answer("Кабинет доступен только владельцу.", show_alert=True)
+            return
+
+        st = rw_repo.get_partner_cabinet(bot_id) or {}
+        gross = float(st.get("gross_paid_card", 0.0) or 0.0)
+        com_total = float(st.get("commission_total", 0.0) or 0.0)
+        avail = float(st.get("available", 0.0) or 0.0)
+        users = int(st.get("total_users", 0) or 0)
+
+        text = (
+            "👤 <b>Личный кабинет</b>\n\n"
+            f"Бот: @{info.get('username') or 'без_username'}\n"
+            f"Пользователей: <b>{users}</b>\n\n"
+            f"Оплачено картой: <b>{gross:.2f} ₽</b>\n"
+            f"Ваш процент: <b>35%</b>\n"
+            f"Ваш доход: <b>{com_total:.2f} ₽</b>\n"
+            f"Доступно к выводу: <b>{avail:.2f} ₽</b>\n\n"
+            "ℹ️ Минимальная сумма вывода: <b>1500 ₽</b>\n"
+        )
+        await cb.message.edit_text(text, reply_markup=_kb_partner_cabinet(), disable_web_page_preview=True)
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "partner_withdraw")
+    @catch_callback_errors
+    async def partner_withdraw(cb: types.CallbackQuery, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        if bot_id <= 0:
+            await cb.answer("Вывод доступен только в клонах.", show_alert=True)
+            return
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(cb.from_user.id) != owner_id:
+            await cb.answer("Только владелец.", show_alert=True)
+            return
+
+        st = rw_repo.get_partner_cabinet(bot_id) or {}
+        avail = float(st.get("available", 0.0) or 0.0)
+
+        # Require payout requisites
+        default_req = rw_repo.get_default_partner_requisite(bot_id, owner_id)
+        if not default_req:
+            items = rw_repo.list_partner_requisites(bot_id, owner_id) or []
+            await cb.message.edit_text(
+                "💳 <b>Реквизиты не указаны</b>\n\n"
+                "Сначала добавьте реквизиты для вывода (банк + номер карты или телефона).",
+                reply_markup=_kb_partner_requisites(items),
+            )
+            await fast_callback_answer(cb)
+            return
+
+        await state.set_state(FranchiseStates.waiting_withdraw_amount)
+        await cb.message.edit_text(
+            "💸 <b>Вывод средств</b>\n\n"
+            f"Доступно: <b>{avail:.2f} ₽</b>\n"
+            "Минимум: <b>1500 ₽</b>\n\n"
+            "Введите сумму для вывода числом (например: <code>1500</code>):",
+            reply_markup=_kb_partner_withdraw(),
+        )
+        await fast_callback_answer(cb)
+
+    @user_router.callback_query(F.data == "partner_withdraw_cancel")
+    @catch_callback_errors
+    async def partner_withdraw_cancel(cb: types.CallbackQuery, state: FSMContext):
+        try:
+            await state.clear()
+        except Exception:
+            pass
+        # show cabinet again
+        try:
+            await partner_cabinet(cb, cb.bot)
+        except Exception:
+            try:
+                await show_main_menu(cb.message, edit_message=True)
+            except Exception:
+                pass
+        await fast_callback_answer(cb)
+
+    @user_router.message(FranchiseStates.waiting_withdraw_amount)
+    @registration_required
+    async def partner_withdraw_amount(message: types.Message, state: FSMContext, bot: Bot):
+        bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+        info = rw_repo.get_managed_bot(bot_id) or {}
+        owner_id = int(info.get("owner_telegram_id") or 0)
+        if int(message.from_user.id) != owner_id:
+            await message.answer("Только владелец.")
+            try:
+                await state.clear()
+            except Exception:
+                pass
+            return
+
+        raw = (message.text or "").replace(",", ".").strip()
+        try:
+            amount = float(raw)
+        except Exception:
+            await message.answer("Не понял сумму. Пришлите число, например <code>1500</code>.")
+            return
+
+        # Attach payout requisites snapshot to the withdraw request
+        default_req = rw_repo.get_default_partner_requisite(bot_id, owner_id)
+        if not default_req:
+            await message.answer(
+                "💳 Реквизиты не указаны. Сначала добавьте банк и номер карты/телефона, затем повторите вывод.",
+                reply_markup=_kb_partner_requisites(rw_repo.list_partner_requisites(bot_id, owner_id) or []),
+            )
+            try:
+                await state.clear()
+            except Exception:
+                pass
+            return
+
+        bank = str(default_req.get('bank') or '')
+        rtype = str(default_req.get('requisite_type') or 'card')
+        rvalue = str(default_req.get('requisite_value') or '')
+        rid = int(default_req.get('id') or 0) or None
+
+        ok, msg = rw_repo.create_withdraw_request(
+            bot_id,
+            owner_id,
+            amount,
+            bank=bank,
+            requisite_type=rtype,
+            requisite_value=rvalue,
+            requisite_id=rid,
+        )
+        await message.answer(("✅ " if ok else "❌ ") + msg)
+
+        # Notify admin from the ROOT bot token so the admin always receives it
+        if ok:
+            try:
+                admin_id_raw = get_setting("admin_telegram_id")
+                admin_id = int(str(admin_id_raw).strip()) if admin_id_raw else None
+            except Exception:
+                admin_id = None
+
+            if admin_id:
+                try:
+                    root_token = (get_setting("telegram_bot_token") or "").strip()
+                    if root_token:
+                        tmp = Bot(token=root_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                        try:
+                            await tmp.send_message(
+                                admin_id,
+                                (
+                                    "💸 <b>Заявка на вывод</b>\n"
+                                    f"Бот: @{info.get('username') or 'без_username'} (bot_id={bot_id})\n"
+                                    f"Владелец: <code>{owner_id}</code>\n"
+                                    f"Сумма: <b>{amount:.2f} ₽</b>\n"
+                                    f"Реквизиты: <b>{html_escape(str(default_req.get('bank') or ''))}</b> — <code>{html_escape(str(default_req.get('requisite_value') or ''))}</code>"
+                                ),
+                            )
+                        finally:
+                            try:
+                                await tmp.close()
+                            except Exception:
+                                try:
+                                    await tmp.session.close()
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+
+        try:
+            await state.clear()
+        except Exception:
+            pass
+
+        # Show cabinet again
+        try:
+            st = rw_repo.get_partner_cabinet(bot_id) or {}
+            await message.answer(
+                "📊 Обновляю кабинет...",
+            )
+            # reuse cabinet view
+            fake_cb = types.CallbackQuery(id="0", from_user=message.from_user, chat_instance="0", message=message)
+            # Can't construct reliably; instead just show main menu which contains cabinet button
+        except Exception:
+            pass
+        try:
+            await show_main_menu(message)
+        except Exception:
+            pass
+
     return user_router
 
 async def notify_admin_of_purchase(bot: Bot, metadata: dict):
@@ -4491,6 +5126,22 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         except Exception as e:
             logger.error(f"process_successful_payment: idempotency check failed for {payment_id}: {e}", exc_info=True)
             return
+
+                # Franchise: accrue partner commission for payments made through a managed clone bot.
+        try:
+            factory_bot_id = int((metadata or {}).get("factory_bot_id") or 0)
+        except Exception:
+            factory_bot_id = 0
+        if factory_bot_id <= 0:
+            try:
+                factory_bot_id = rw_repo.resolve_factory_bot_id(getattr(bot, "id", None))
+            except Exception:
+                factory_bot_id = 0
+        if factory_bot_id > 0:
+            try:
+                rw_repo.accrue_partner_commission(factory_bot_id, str(payment_id), int(user_id), float(price), payment_method, 35.0)
+            except Exception:
+                pass
 
         chat_id_to_delete = metadata.get('chat_id')
         message_id_to_delete = metadata.get('message_id')

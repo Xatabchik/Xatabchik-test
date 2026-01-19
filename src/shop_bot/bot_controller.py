@@ -11,6 +11,9 @@ from shop_bot.bot.handlers import get_user_router
 from shop_bot.bot.admin_handlers import get_admin_router
 from shop_bot.bot.middlewares import BanMiddleware
 from shop_bot.bot import handlers
+from shop_bot.factory_bot.service import ManagedBotsService
+from shop_bot.factory_bot.middleware import FactoryStatsMiddleware
+from shop_bot.factory_bot.runtime import set_service
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ class BotController:
         self._task = None
         self._is_running = False
         self._loop = None
+        self._managed_service: ManagedBotsService | None = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
@@ -46,6 +50,12 @@ class BotController:
             logger.info("Опрос корректно остановлен.")
             self._is_running = False
             self._task = None
+            # Stop managed clone bots together with the root bot
+            try:
+                if self._managed_service:
+                    await self._managed_service.stop_all()
+            except Exception:
+                pass
             if self._bot:
                 await self._bot.close()
             self._bot = None
@@ -81,6 +91,10 @@ class BotController:
 
             self._dp.message.middleware(BanMiddleware())
             self._dp.callback_query.middleware(BanMiddleware())
+
+            # Franchise context + stats middleware (tracks only managed clones, bot_id>0)
+            self._dp.message.middleware(FactoryStatsMiddleware())
+            self._dp.callback_query.middleware(FactoryStatsMiddleware())
             
             user_router = get_user_router()
             admin_router = get_admin_router()
@@ -92,6 +106,15 @@ class BotController:
             
             self._dp.include_router(user_router)
             self._dp.include_router(admin_router)
+
+            # Start all managed clone bots on the same event loop
+            try:
+                if not self._managed_service:
+                    self._managed_service = ManagedBotsService(self._loop)
+                    set_service(self._managed_service)
+                asyncio.run_coroutine_threadsafe(self._managed_service.start_all(), self._loop)
+            except Exception as e:
+                logger.warning(f"Не удалось запустить клоны ботов: {e}")
             
             try:
                 asyncio.run_coroutine_threadsafe(self._bot.delete_webhook(drop_pending_updates=True), self._loop)

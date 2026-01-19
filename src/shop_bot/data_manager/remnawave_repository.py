@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -9,6 +10,52 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = database.DB_FILE
 normalize_host_name = database.normalize_host_name
+
+# =============================
+# Franchise context (current bot)
+# =============================
+
+_factory_bot_id_var: ContextVar[int] = ContextVar("factory_bot_id", default=0)
+
+
+def set_current_factory_bot_id(bot_id: int) -> Any:
+    """Set current factory bot id for the running handler via contextvars.
+
+    Returns a token that can be used to reset the context.
+    """
+    try:
+        return _factory_bot_id_var.set(int(bot_id or 0))
+    except Exception:
+        return _factory_bot_id_var.set(0)
+
+
+def reset_current_factory_bot_id(token: Any) -> None:
+    try:
+        _factory_bot_id_var.reset(token)
+    except Exception:
+        pass
+
+
+def get_current_factory_bot_id() -> int:
+    try:
+        return int(_factory_bot_id_var.get() or 0)
+    except Exception:
+        return 0
+
+
+def create_payload_pending(payment_id: str, user_id: int, amount_rub, metadata) -> bool:
+    """Create/update pending payload metadata.
+
+    We inject `factory_bot_id` into metadata automatically so that:
+    - successful webhooks can reply from the correct clone bot
+    - partner commission can be accrued correctly
+    """
+    meta = dict(metadata or {})
+    if "factory_bot_id" not in meta:
+        fb = get_current_factory_bot_id()
+        if fb:
+            meta["factory_bot_id"] = int(fb)
+    return database.create_payload_pending(payment_id, user_id, amount_rub, meta)
 
 
 def _connect() -> sqlite3.Connection:
@@ -319,6 +366,22 @@ _LEGACY_FORWARDERS = (
     "get_metrics_series",
     "get_referral_top_rich",
     "get_referral_rank_and_count",
+
+    # Franchise (managed clone bots)
+    "resolve_factory_bot_id",
+    "get_managed_bot",
+    "get_managed_bot_by_telegram_id",
+    "list_active_managed_bots",
+    "create_managed_bot",
+    "record_factory_activity",
+    "accrue_partner_commission",
+    "get_partner_cabinet",
+    "create_withdraw_request",
+    "list_partner_requisites",
+    "get_default_partner_requisite",
+    "add_partner_requisite",
+    "set_default_partner_requisite",
+    "delete_partner_requisite",
 )
 
 for _name in _LEGACY_FORWARDERS:

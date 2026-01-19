@@ -15,14 +15,21 @@
   <td>{{ t.updated_at }}</td>
   <td>
     <div class="btn-list">
-      <a class="btn btn-sm btn-primary btn-glass" href="{{ url_for('support_ticket_page', ticket_id=t.ticket_id) }}" title="Открыть" data-bs-toggle="tooltip" aria-label="Открыть"><i class="ti ti-mail-opened"></i></a>
+      <a class="btn btn-sm btn-primary" href="{{ url_for('support_ticket_page', ticket_id=t.ticket_id) }}" title="Открыть" data-bs-toggle="tooltip" aria-label="Открыть">
+        <i class="ti ti-mail-opened me-1"></i>
+        Открыть
+      </a>
       <form method="post"
             action="{{ url_for('delete_support_ticket_route', ticket_id=t.ticket_id) }}"
             style="display:inline-block"
             data-confirm="Удалить тикет #{{ t.ticket_id }}? Это действие необратимо."
             data-ajax="delete"
             data-refresh-target="support-tbody">
-        <button type="submit" class="btn btn-sm btn-danger btn-glass" title="Удалить" data-bs-toggle="tooltip" aria-label="Удалить"><i class="ti ti-trash"></i></button>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить" data-bs-toggle="tooltip" aria-label="Удалить">
+          <i class="ti ti-trash me-1"></i>
+          Удалить
+        </button>
       </form>
     </div>
   </td>

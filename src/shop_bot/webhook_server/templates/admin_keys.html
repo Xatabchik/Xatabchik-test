@@ -1,23 +1,36 @@
 {% extends "base.html" %} {% block title %}Админ — Ключи{% endblock %}
 {% block content %}
-<div class="page-header d-print-none">
+<div class="page-header d-print-none mb-4">
   <div class="row align-items-center">
     <div class="col">
-      <h2 class="page-title">Ключи</h2>
+      <h1 class="page-title mb-1">Ключи</h1>
       <div class="text-secondary">Просмотр, создание, удаление и редактирование комментариев</div>
     </div>
   </div>
 </div>
 
-<div class="card glass mb-3">
+<div class="card mb-4">
+  <div class="card-header">
+    <h3 class="card-title">
+      <i class="ti ti-key-plus me-2"></i>
+      Создать новый ключ
+    </h3>
+  </div>
   <div class="card-body">
     <form action="{{ url_for('create_key_ajax_route') }}" method="post" class="row g-3" id="create-key-form" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="mode" id="create_mode" value="personal" />
       <div class="col-12">
-        <div class="btn-group" role="group" id="mode_switch">
-          <button type="button" class="btn btn-outline-primary active" data-mode="personal">Персональный ключ</button>
-          <button type="button" class="btn btn-outline-primary" data-mode="gift">Подарочный ключ</button>
+        <label class="form-label mb-2">Тип ключа</label>
+        <div class="btn-group w-100" role="group" id="mode_switch">
+          <button type="button" class="btn btn-outline-primary active" data-mode="personal">
+            <i class="ti ti-user me-1"></i>
+            Персональный ключ
+          </button>
+          <button type="button" class="btn btn-outline-primary" data-mode="gift">
+            <i class="ti ti-gift me-1"></i>
+            Подарочный ключ
+          </button>
         </div>
       </div>
 
@@ -93,26 +106,42 @@
       </div>
 
       <div class="col-12">
-        <button type="button" class="btn btn-primary rounded-3" id="btn-submit-create">Создать</button>
+        <button type="button" class="btn btn-primary w-100" id="btn-submit-create">
+          <i class="ti ti-plus me-1"></i>
+          Создать ключ
+        </button>
       </div>
     </form>
   </div>
 </div>
 
 <div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <h3 class="card-title mb-0">
+      <i class="ti ti-list me-2"></i>
+      Список ключей
+    </h3>
+    <form action="{{ url_for('sweep_expired_keys_route') }}" method="post" data-confirm="Удалить все истёкшие ключи? Это действие необратимо." class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <button type="submit" class="btn btn-outline-danger btn-sm" title="Удалить истёкшие">
+        <i class="ti ti-broom me-1"></i>
+        Удалить истёкшие
+      </button>
+    </form>
+  </div>
   <div class="card-body">
     <div class="table-responsive">
-      <table class="table table-vcenter">
+      <table class="table table-vcenter table-hover">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>User</th>
-            <th>Хост</th>
-            <th>Email</th>
-            <th>UUID</th>
-            <th>Истекает</th>
-            <th>Создан</th>
-            <th class="w-1">Действия</th>
+            <th><i class="ti ti-hash me-1"></i> ID</th>
+            <th><i class="ti ti-user me-1"></i> Пользователь</th>
+            <th><i class="ti ti-server me-1"></i> Хост</th>
+            <th><i class="ti ti-mail me-1"></i> Email</th>
+            <th><i class="ti ti-key me-1"></i> UUID</th>
+            <th><i class="ti ti-calendar me-1"></i> Истекает</th>
+            <th><i class="ti ti-clock me-1"></i> Создан</th>
+            <th class="w-1"><i class="ti ti-settings me-1"></i> Действия</th>
           </tr>
         </thead>
         <tbody id="keys-tbody" data-fetch-url="{{ url_for('admin_keys_table_partial') }}" data-fetch-interval="10000">
@@ -127,8 +156,12 @@
             <td>{{ k.created_date or '' }}</td>
             <td>
               <div class="btn-list">
-                <form action="{{ url_for('delete_key_route', key_id=k.key_id) }}" method="post" data-confirm="Удалить ключ #{{ k.key_id }}?">
-                  <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                <form action="{{ url_for('delete_key_route', key_id=k.key_id) }}" method="post" data-confirm="Удалить ключ #{{ k.key_id }}?" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                  <button type="submit" class="btn btn-danger btn-sm">
+                    <i class="ti ti-trash me-1"></i>
+                    Удалить
+                  </button>
                 </form>
               </div>
             </td>
@@ -629,14 +662,6 @@
 </script>
 
 
-<div id="expired-toolbar" class="d-flex justify-content-end align-items-center my-2 gap-2">
-  <form action="{{ url_for('sweep_expired_keys_route') }}" method="post" data-confirm="Удалить все истёкшие ключи? Это действие необратимо.">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-    <button type="submit" class="btn btn-outline-danger btn-sm btn-glass" title="Удалить истёкшие" data-bs-toggle="tooltip">
-      <i class="ti ti-broom"></i> Удалить истёкшие
-    </button>
-  </form>
-  </div>
 
 <script>
   // Перенести панель удаления истёкших над таблицей ключей
@@ -654,20 +679,29 @@
 
 
 <div class="modal modal-blur fade" id="expiryModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Изменить срок действия</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <h5 class="modal-title">
+          <i class="ti ti-calendar-stats me-2"></i>
+          Изменить срок действия
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
       </div>
       <div class="modal-body">
         <label for="expiryDelta" class="form-label">Сколько дней прибавить/убавить</label>
-        <input type="number" class="form-control" id="expiryDelta" placeholder="Например, 7 или -7" />
+        <div class="input-group">
+          <span class="input-group-text"><i class="ti ti-plus-minus"></i></span>
+          <input type="number" class="form-control" id="expiryDelta" placeholder="Например, 7 или -7" />
+        </div>
         <small class="text-secondary">Введите положительное число для продления, отрицательное — для уменьшения срока.</small>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
-        <button type="button" class="btn btn-primary" id="expirySaveBtn">Сохранить</button>
+        <button type="button" class="btn btn-primary" id="expirySaveBtn">
+          <i class="ti ti-check me-1"></i>
+          Сохранить
+        </button>
       </div>
     </div>
   </div>
@@ -742,22 +776,31 @@
 
 
 <div class="modal modal-blur fade" id="commentModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Комментарий к ключу</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <h5 class="modal-title">
+          <i class="ti ti-message me-2"></i>
+          Комментарий к ключу
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
       </div>
       <div class="modal-body">
-        <input type="text" id="commentInput" class="form-control" placeholder="Введите комментарий" />
+        <div class="input-group">
+          <span class="input-group-text"><i class="ti ti-edit"></i></span>
+          <input type="text" id="commentInput" class="form-control" placeholder="Введите комментарий" />
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
-        <button type="button" class="btn btn-primary" id="commentSaveBtn">Сохранить</button>
+        <button type="button" class="btn btn-primary" id="commentSaveBtn">
+          <i class="ti ti-check me-1"></i>
+          Сохранить
+        </button>
       </div>
     </div>
   </div>
-  </div>
+</div>
 
 <script>
   (function(){

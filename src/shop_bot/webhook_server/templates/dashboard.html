@@ -1,18 +1,18 @@
 {% extends "base.html" %} {% block title %}Главная страница{% endblock %} {% block content %}
 
 <div class="page-header d-print-none">
-  <div class="row align-items-center">
+  <div class="row align-items-center mb-4">
     <div class="col">
-      <h2 class="page-title">Главная</h2>
-      <div class="text-secondary">Сводка и ключевые метрики</div>
+      <h1 class="page-title mb-1">Главная</h1>
+      <div class="text-secondary">Сводка и ключевые метрики системы</div>
     </div>
   </div>
-  <div id="dash-stats" class="row row-deck row-cards mt-2"
+  
+  <div id="dash-stats" class="row g-3 mb-4"
        data-fetch-url="{{ url_for('dashboard_stats_partial') }}"
        data-fetch-interval="8000">
     {% include 'partials/dashboard_stats.html' %}
   </div>
-  
 </div>
 
 <div class="row row-cards">
@@ -54,9 +54,12 @@
         </div>
       </div>
     </div>
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
-        <h3 class="card-title">Новые пользователи (30 дней)</h3>
+        <h3 class="card-title">
+          <i class="ti ti-user-plus me-2"></i>
+          Новые пользователи (30 дней)
+        </h3>
       </div>
       <div class="card-body">
         <div class="chart" style="height: 280px">
@@ -65,9 +68,12 @@
       </div>
     </div>
 
-    <div class="card mt-3">
+    <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Новые ключи (30 дней)</h3>
+        <h3 class="card-title">
+          <i class="ti ti-key me-2"></i>
+          Новые ключи (30 дней)
+        </h3>
       </div>
       <div class="card-body">
         <div class="chart" style="height: 280px">
@@ -80,12 +86,15 @@
   <div class="col-lg-5">
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Недавние транзакции</h3>
+        <h3 class="card-title">
+          <i class="ti ti-receipt me-2"></i>
+          Недавние транзакции
+        </h3>
       </div>
       <div class="card-body">
         {% if transactions %}
         <div class="table-responsive">
-          <table class="table table-vcenter">
+          <table class="table table-vcenter table-hover">
             <thead>
               <tr>
                 <th>Пользователь</th>

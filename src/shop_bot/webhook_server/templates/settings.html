@@ -1,14 +1,13 @@
 {% extends "base.html" %} {% block title %}Настройки Бота и Хостов{% endblock %}
 {% block content %}
 
-<div class="page-header d-print-none">
+<div class="page-header d-print-none mb-4">
   <div class="row align-items-center">
     <div class="col">
-      <h2 class="page-title">Настройки</h2>
+      <h1 class="page-title mb-1">Настройки</h1>
       <div class="text-secondary">Панель, боты, платежи, хосты и контент</div>
     </div>
   </div>
-  <div class="hr-text"></div>
 </div>
 
 {# Индикатор готовности к запуску #}
@@ -26,18 +25,18 @@
 {% endif %}
 
 {# Навигация по разделам настроек #}
-<div class="card glass mb-3">
+<div class="card mb-4">
   <div class="card-body py-2">
-    <ul class="nav nav-pills">
-      <li class="nav-item"><a class="nav-link" href="#panel">Панель</a></li>
-      <li class="nav-item"><a class="nav-link" href="#bot">Бот</a></li>
-      <li class="nav-item"><a class="nav-link" href="#support-bot">Support‑бот</a></li>
-      <li class="nav-item"><a class="nav-link" href="#payments">Платежи</a></li>
-      <li class="nav-item"><a class="nav-link" href="#hosts">Хосты/Тарифы</a></li>
-      <li class="nav-item"><a class="nav-link" href="#referrals">Рефералы</a></li>
-      <li class="nav-item"><a class="nav-link" href="#trial">Триал</a></li>
-      <li class="nav-item"><a class="nav-link" href="#content">Контент</a></li>
-      <li class="nav-item"><a class="nav-link" href="#monitoring">Мониторинг</a></li>
+    <ul class="nav nav-pills nav-fill">
+      <li class="nav-item"><a class="nav-link" href="#panel"><i class="ti ti-dashboard me-1"></i> Панель</a></li>
+      <li class="nav-item"><a class="nav-link" href="#bot"><i class="ti ti-robot me-1"></i> Бот</a></li>
+      <li class="nav-item"><a class="nav-link" href="#support-bot"><i class="ti ti-message-circle me-1"></i> Support‑бот</a></li>
+      <li class="nav-item"><a class="nav-link" href="#payments"><i class="ti ti-currency-ruble me-1"></i> Платежи</a></li>
+      <li class="nav-item"><a class="nav-link" href="#hosts"><i class="ti ti-server me-1"></i> Хосты/Тарифы</a></li>
+      <li class="nav-item"><a class="nav-link" href="#referrals"><i class="ti ti-users-group me-1"></i> Рефералы</a></li>
+      <li class="nav-item"><a class="nav-link" href="#trial"><i class="ti ti-gift me-1"></i> Триал</a></li>
+      <li class="nav-item"><a class="nav-link" href="#content"><i class="ti ti-file-text me-1"></i> Контент</a></li>
+      <li class="nav-item"><a class="nav-link" href="#monitoring"><i class="ti ti-chart-line me-1"></i> Мониторинг</a></li>
     </ul>
   </div>
 </div>
@@ -138,12 +137,22 @@
 <div class="settings-container">
 	<div class="settings-column-left">
 		<section class="settings-section" id="hosts">
-			<h2>Управление Хостами (Серверами)</h2>
+			<div class="card mb-4">
+				<div class="card-header">
+					<h2 class="card-title">
+						<i class="ti ti-server me-2"></i>
+						Управление Хостами (Серверами)
+					</h2>
+				</div>
+			</div>
 
 			<div class="row g-3 align-items-start">
 				<div class="col-12 col-lg-5">
 					<div class="host-card">
-						<h4>Добавить новый хост</h4>
+						<h4>
+							<i class="ti ti-plus me-2"></i>
+							Добавить новый хост
+						</h4>
 						<form action="{{ url_for('add_host_route') }}" method="post">
 							<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 							<div class="form-group">
@@ -163,8 +172,11 @@
 								<label for="squad_uuid">Squad UUID:</label>
 								<input type="text" id="squad_uuid" name="squad_uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
 							</div>
-							<button type="submit" class="btn btn-primary">Добавить</button>
-</form>
+							<button type="submit" class="btn btn-primary">
+								<i class="ti ti-plus me-1"></i>
+								Добавить хост
+							</button>
+						</form>
 					</div>
 				</div>
 				<div class="col-12 col-lg-7">
@@ -305,7 +317,10 @@
 			<div class="row g-3 align-items-start">
 				<div class="col-12 col-lg-5">
 					<div class="host-card">
-						<h4>Добавить SSH-цель</h4>
+						<h4>
+							<i class="ti ti-terminal me-2"></i>
+							Добавить SSH-цель
+						</h4>
 						<form action="{{ url_for('create_ssh_target_route') }}" method="post">
 							<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 							<div class="form-group">
@@ -339,13 +354,19 @@
 								<label for="ssh_target_desc">Описание</label>
 								<input type="text" id="ssh_target_desc" name="description" />
 							</div>
-							<button type="submit" class="btn btn-primary">Добавить</button>
+							<button type="submit" class="btn btn-primary">
+								<i class="ti ti-plus me-1"></i>
+								Добавить SSH-цель
+							</button>
 						</form>
 					</div>
 				</div>
 				<div class="col-12 col-lg-7">
 					<div class="host-card">
-						<h4>SSH-цели</h4>
+						<h4>
+							<i class="ti ti-list me-2"></i>
+							SSH-цели
+						</h4>
 						{% if ssh_targets %}
 							{% for t in ssh_targets %}
 							<details class="card glass rw-drawer rw-drawer-host" style="margin:8px 0;">
@@ -422,7 +443,12 @@
             <input type="hidden" name="next_hash" id="settings-next-hash" value="#panel" />
 			<section class="settings-section" id="panel">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройки Панели</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-dashboard me-2"></i>
+							Настройки Панели
+						</h2>
+					</div>
 					<div class="card-body">
 						<div class="form-group">
 							<label for="panel_login">Логин для входа в панель:</label>
@@ -511,7 +537,12 @@
 
             <section class="settings-section" id="monitoring">
                 <div class="card">
-                    <div class="card-header"><h2 class="card-title">Мониторинг ресурсов</h2></div>
+                    <div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-chart-line me-2"></i>
+							Мониторинг ресурсов
+						</h2>
+					</div>
                     <div class="card-body">
                         <div class="mb-3">
                             <input type="hidden" name="monitoring_enabled" value="false" />
@@ -555,7 +586,12 @@
 
 			<section class="settings-section" id="bot">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройка Бота</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-robot me-2"></i>
+							Настройка Бота
+						</h2>
+					</div>
 					<div class="card-body">
 						<div class="status-bar" style="margin-bottom: 10px;">
 							<p><strong>Статус:</strong>
@@ -661,8 +697,13 @@
 			</div>
 			</section>
 			<section class="settings-section" id="support-bot">
-                <div class="card glass">
-                    <div class="card-header"><h2 class="card-title">Настройки Support-бота</h2></div>
+                <div class="card">
+                    <div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-message-circle me-2"></i>
+							Настройки Support-бота
+						</h2>
+					</div>
                     <div class="card-body">
                         <div class="status-bar" style="margin-bottom: 10px;">
                             <p><strong>Статус:</strong>
@@ -692,7 +733,12 @@
             </section>
             			<section class="settings-section" id="referrals">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройки Реферальной программы</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-users-group me-2"></i>
+							Настройки Реферальной программы
+						</h2>
+					</div>
 					<div class="card-body">
 						<div class="mb-3">
 							<input type="hidden" name="enable_referrals" value="false" />
@@ -770,7 +816,12 @@
 			</section>
 			<section class="settings-section" id="trial">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройки Пробного периода</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-gift me-2"></i>
+							Настройки Пробного периода
+						</h2>
+					</div>
 					<div class="card-body">
 						<div class="mb-3">
 							<input type="hidden" name="trial_enabled" value="false" />
@@ -797,7 +848,12 @@
 
 			<section class="settings-section" id="payments">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройки Платежных Систем</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-currency-ruble me-2"></i>
+							Настройки Платежных Систем
+						</h2>
+					</div>
 					<div class="card-body">
 						<details class="rw-drawer rw-drawer-payment">
 							<summary class="rw-drawer-summary"><span>Баланс</span><span class="rw-drawer-caret" aria-hidden="true"></span></summary>
@@ -1035,7 +1091,12 @@
 
 			<section class="settings-section" id="content">
 				<div class="card">
-					<div class="card-header"><h2 class="card-title">Настройки Контента</h2></div>
+					<div class="card-header">
+						<h2 class="card-title">
+							<i class="ti ti-file-text me-2"></i>
+							Настройки Контента
+						</h2>
+					</div>
 					<div class="card-body">
 						<div class="mb-3">
 							<label class="form-label" for="about_text">Текст "О проекте"</label>
@@ -1148,7 +1209,8 @@
 			</section>
 
 			<div class="settings-actions">
-				<button type="submit" class="btn btn-primary">
+				<button type="submit" class="btn btn-primary btn-lg">
+					<i class="ti ti-device-floppy me-2"></i>
 					Сохранить все настройки
 				</button>
 			</div>

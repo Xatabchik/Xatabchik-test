@@ -330,6 +330,98 @@ def initialize_db():
                     metadata TEXT
                 )
             ''')
+
+            # === Franchise (managed clone bots) ===
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS managed_bots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_bot_user_id INTEGER NOT NULL UNIQUE,
+                    username TEXT,
+                    token TEXT NOT NULL,
+                    owner_telegram_id INTEGER NOT NULL,
+                    referrer_bot_id INTEGER DEFAULT 0,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS factory_user_activity (
+                    bot_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    messages_count INTEGER DEFAULT 0,
+                    PRIMARY KEY (bot_id, user_id)
+                )
+            ''')
+            try:
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_factory_activity_bot ON factory_user_activity(bot_id)')
+            except Exception:
+                pass
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS partner_commissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    payment_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    amount_rub REAL NOT NULL,
+                    commission_percent REAL NOT NULL,
+                    commission_rub REAL NOT NULL,
+                    payment_method TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(bot_id, payment_id)
+                )
+            ''')
+            try:
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_partner_commissions_bot ON partner_commissions(bot_id, created_at DESC)')
+            except Exception:
+                pass
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS partner_withdraw_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    owner_telegram_id INTEGER NOT NULL,
+                    amount_rub REAL NOT NULL,
+                    status TEXT DEFAULT 'pending',
+                    comment TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            try:
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_partner_withdraw_bot ON partner_withdraw_requests(bot_id, created_at DESC)')
+            except Exception:
+                pass
+
+            # Partner payout requisites (bank + card/phone)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS partner_payout_requisites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    owner_telegram_id INTEGER NOT NULL,
+                    bank TEXT NOT NULL,
+                    requisite_type TEXT NOT NULL,
+                    requisite_value TEXT NOT NULL,
+                    is_default INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            try:
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_partner_requisites_owner ON partner_payout_requisites(bot_id, owner_telegram_id, created_at DESC)')
+            except Exception:
+                pass
+
+            # Migrations for withdraw requests: store requisites snapshot
+            try:
+                _ensure_table_column(cursor, 'partner_withdraw_requests', 'bank', 'TEXT')
+                _ensure_table_column(cursor, 'partner_withdraw_requests', 'requisite_type', 'TEXT')
+                _ensure_table_column(cursor, 'partner_withdraw_requests', 'requisite_value', 'TEXT')
+                _ensure_table_column(cursor, 'partner_withdraw_requests', 'requisite_id', 'INTEGER')
+            except Exception:
+                pass
+
             default_settings = {
     "enable_referral_days_bonus": "true",
                 "panel_login": "admin",
@@ -340,8 +432,8 @@ def initialize_db():
                 "support_user": None,
                 "support_text": None,
                 "channel_url": None,
-                "channel_link": "https://t.me/channel",
-                "chat_link": "https://t.me/chat",
+                "channel_link": "https://t.me/strettenvpn",
+                "chat_link": "https://t.me/+QxEKczSfPB85ZmJi",
                 "force_subscription": "true",
                 "receipt_email": "example@example.com",
                 "telegram_bot_token": None,
@@ -4324,3 +4416,520 @@ def update_key_usage_monitor(
     except sqlite3.Error as e:
         logging.error(f"Failed to update key_usage_monitor for key_id={key_id}: {e}")
         return False
+
+# =============================
+# Franchise (managed clone bots)
+# =============================
+
+FRANCHISE_PERCENT_DEFAULT = 35.0
+FRANCHISE_MIN_WITHDRAW_RUB = 1500.0
+
+
+def resolve_factory_bot_id(telegram_bot_user_id: int | None) -> int:
+    """Return internal managed bot id for a Telegram bot user id.
+
+    Root (main) bot => 0.
+    """
+    try:
+        tg_id = int(telegram_bot_user_id or 0)
+    except Exception:
+        return 0
+    if tg_id <= 0:
+        return 0
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM managed_bots WHERE telegram_bot_user_id = ? AND COALESCE(is_active,1)=1 LIMIT 1", (tg_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def get_managed_bot(bot_id: int) -> dict | None:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM managed_bots WHERE id = ? LIMIT 1", (int(bot_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"get_managed_bot failed: {e}")
+        return None
+
+
+def get_managed_bot_by_telegram_id(telegram_bot_user_id: int) -> dict | None:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM managed_bots WHERE telegram_bot_user_id = ? LIMIT 1", (int(telegram_bot_user_id),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"get_managed_bot_by_telegram_id failed: {e}")
+        return None
+
+
+def list_active_managed_bots() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM managed_bots WHERE COALESCE(is_active,1)=1 ORDER BY id ASC")
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"list_active_managed_bots failed: {e}")
+        return []
+
+
+def create_managed_bot(
+    *,
+    token: str,
+    telegram_bot_user_id: int,
+    username: str | None,
+    owner_telegram_id: int,
+    referrer_bot_id: int = 0,
+) -> tuple[bool, str, int | None]:
+    """Register a managed bot.
+
+    If the telegram bot user id already exists, update token/username/owner.
+    """
+    token_s = (token or "").strip()
+    if not token_s:
+        return False, "Токен пустой.", None
+    try:
+        tg_bot_id = int(telegram_bot_user_id)
+        owner_id = int(owner_telegram_id)
+        ref_bot_id = int(referrer_bot_id or 0)
+    except Exception:
+        return False, "Некорректные параметры.", None
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            # uniqueness by telegram_bot_user_id
+            cur.execute("SELECT id, owner_telegram_id FROM managed_bots WHERE telegram_bot_user_id = ? LIMIT 1", (tg_bot_id,))
+            row = cur.fetchone()
+            if row:
+                bot_id = int(row[0])
+                cur.execute(
+                    """
+                    UPDATE managed_bots
+                    SET token = ?, username = ?, owner_telegram_id = ?, referrer_bot_id = COALESCE(?, referrer_bot_id), is_active = 1
+                    WHERE id = ?
+                    """,
+                    (token_s, (username or None), owner_id, ref_bot_id, bot_id),
+                )
+                conn.commit()
+                return True, "Бот обновлён.", bot_id
+
+            cur.execute(
+                """
+                INSERT INTO managed_bots (telegram_bot_user_id, username, token, owner_telegram_id, referrer_bot_id, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+                """,
+                (tg_bot_id, (username or None), token_s, owner_id, ref_bot_id),
+            )
+            conn.commit()
+            bot_id = int(cur.lastrowid)
+            return True, "Бот создан.", bot_id
+    except sqlite3.Error as e:
+        logger.error(f"create_managed_bot failed: {e}")
+        return False, "Ошибка БД при создании бота.", None
+
+
+def record_factory_activity(bot_id: int, user_id: int) -> None:
+    """Upsert activity row (unique users + messages count)."""
+    try:
+        b = int(bot_id or 0)
+        u = int(user_id or 0)
+    except Exception:
+        return
+    # Root (main) bot is not tracked as a franchise bot.
+    if b <= 0:
+        return
+    if u <= 0:
+        return
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO factory_user_activity (bot_id, user_id, first_seen, last_seen, messages_count)
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+                ON CONFLICT(bot_id, user_id) DO UPDATE SET
+                    last_seen = CURRENT_TIMESTAMP,
+                    messages_count = COALESCE(messages_count,0) + 1
+                """,
+                (b, u),
+            )
+            conn.commit()
+    except Exception:
+        return
+
+
+def _is_card_payment_method(method: str | None) -> bool:
+    m = (method or "").strip().lower()
+    if not m:
+        return False
+    if m in {"balance", "баланс"}:
+        return False
+    # Card-like providers (as configured in this project)
+    return m in {"yookassa", "platega", "heleket", "yoomoney"}
+
+
+def accrue_partner_commission(
+    bot_id: int,
+    payment_id: str,
+    user_id: int,
+    amount_rub: float,
+    payment_method: str | None,
+    percent: float | None = None,
+) -> bool:
+    """Accrue partner commission for a managed bot.
+
+    Only card payments are counted. Internal balance payments are ignored.
+    Idempotent by (bot_id, payment_id).
+    """
+    try:
+        b = int(bot_id or 0)
+    except Exception:
+        b = 0
+    if b <= 0:
+        return False
+
+    if not _is_card_payment_method(payment_method):
+        return False
+
+    pid = (payment_id or "").strip()
+    if not pid:
+        return False
+
+    try:
+        u = int(user_id)
+    except Exception:
+        return False
+
+    try:
+        amt = float(amount_rub)
+    except Exception:
+        return False
+    if amt <= 0:
+        return False
+
+    p = float(percent if percent is not None else FRANCHISE_PERCENT_DEFAULT)
+    if p <= 0:
+        return False
+
+    com = round(amt * p / 100.0, 2)
+    if com <= 0:
+        return False
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO partner_commissions
+                (bot_id, payment_id, user_id, amount_rub, commission_percent, commission_rub, payment_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (b, pid, u, amt, p, com, (payment_method or None)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        logger.error(f"accrue_partner_commission failed: {e}")
+        return False
+
+
+def get_partner_cabinet(bot_id: int) -> dict:
+    """Return partner cabinet stats for managed bot."""
+    try:
+        b = int(bot_id or 0)
+    except Exception:
+        b = 0
+    res = {
+        "total_users": 0,
+        "gross_paid_card": 0.0,
+        "commission_total": 0.0,
+        "commission_percent": FRANCHISE_PERCENT_DEFAULT,
+        "requested_withdraw": 0.0,
+        "available": 0.0,
+    }
+    if b <= 0:
+        return res
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+
+            cur.execute("SELECT COUNT(1) FROM factory_user_activity WHERE bot_id = ?", (b,))
+            res["total_users"] = int(cur.fetchone()[0] or 0)
+
+            cur.execute("SELECT COALESCE(SUM(amount_rub),0), COALESCE(SUM(commission_rub),0) FROM partner_commissions WHERE bot_id = ?", (b,))
+            row = cur.fetchone() or (0, 0)
+            res["gross_paid_card"] = float(row[0] or 0)
+            res["commission_total"] = float(row[1] or 0)
+
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(amount_rub),0)
+                FROM partner_withdraw_requests
+                WHERE bot_id = ? AND status IN ('pending','approved','paid')
+                """,
+                (b,),
+            )
+            res["requested_withdraw"] = float(cur.fetchone()[0] or 0)
+
+        res["available"] = max(0.0, float(res["commission_total"]) - float(res["requested_withdraw"]))
+        return res
+    except Exception as e:
+        logger.error(f"get_partner_cabinet failed: {e}")
+        return res
+
+
+
+
+def list_partner_requisites(bot_id: int, owner_telegram_id: int) -> list[dict]:
+    """Return all payout requisites for a partner (owner) within a managed bot."""
+    try:
+        b = int(bot_id or 0)
+        owner = int(owner_telegram_id or 0)
+    except Exception:
+        return []
+    if b <= 0 or owner <= 0:
+        return []
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, bot_id, owner_telegram_id, bank, requisite_type, requisite_value, is_default, created_at "
+                "FROM partner_payout_requisites WHERE bot_id = ? AND owner_telegram_id = ? "
+                "ORDER BY is_default DESC, created_at DESC",
+                (b, owner),
+            )
+            return [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        logger.error(f"list_partner_requisites failed: {e}")
+        return []
+
+
+def get_default_partner_requisite(bot_id: int, owner_telegram_id: int) -> dict | None:
+    """Return the default payout requisite for a partner, if any."""
+    items = list_partner_requisites(bot_id, owner_telegram_id)
+    for r in items:
+        try:
+            if int(r.get('is_default') or 0) == 1:
+                return r
+        except Exception:
+            continue
+    return items[0] if items else None
+
+
+def add_partner_requisite(
+    bot_id: int,
+    owner_telegram_id: int,
+    bank: str,
+    requisite_value: str,
+    requisite_type: str,
+    *,
+    make_default: bool | None = None,
+) -> tuple[bool, str, int | None]:
+    """Add a payout requisite for a partner.
+
+    requisite_type: 'card' or 'phone'
+    """
+    try:
+        b = int(bot_id or 0)
+        owner = int(owner_telegram_id or 0)
+    except Exception:
+        return False, 'Некорректные данные.', None
+
+    bank_s = (bank or '').strip()
+    value_s = (requisite_value or '').strip()
+    rtype = (requisite_type or '').strip().lower()
+
+    if b <= 0 or owner <= 0:
+        return False, 'Некорректные данные.', None
+    if not bank_s or len(bank_s) > 120:
+        return False, 'Укажите банк (до 120 символов).', None
+    if not value_s or len(value_s) > 64:
+        return False, 'Укажите корректные реквизиты.', None
+    if rtype not in {'card', 'phone'}:
+        rtype = 'card'
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+
+            # If it's the first one - force default
+            cur.execute(
+                "SELECT COUNT(1) FROM partner_payout_requisites WHERE bot_id = ? AND owner_telegram_id = ?",
+                (b, owner),
+            )
+            count = int((cur.fetchone() or [0])[0] or 0)
+            if count == 0:
+                make_def = True
+            elif make_default is None:
+                make_def = False
+            else:
+                make_def = bool(make_default)
+
+            if make_def:
+                cur.execute(
+                    "UPDATE partner_payout_requisites SET is_default = 0 WHERE bot_id = ? AND owner_telegram_id = ?",
+                    (b, owner),
+                )
+
+            cur.execute(
+                "INSERT INTO partner_payout_requisites (bot_id, owner_telegram_id, bank, requisite_type, requisite_value, is_default) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (b, owner, bank_s, rtype, value_s, 1 if make_def else 0),
+            )
+            new_id = int(cur.lastrowid or 0)
+            conn.commit()
+
+        return True, 'Реквизиты добавлены.', (new_id if new_id > 0 else None)
+    except Exception as e:
+        logger.error(f"add_partner_requisite failed: {e}")
+        return False, 'Ошибка при сохранении реквизитов.', None
+
+
+def set_default_partner_requisite(req_id: int, bot_id: int, owner_telegram_id: int) -> tuple[bool, str]:
+    """Set given requisite as default for this bot/owner."""
+    try:
+        rid = int(req_id or 0)
+        b = int(bot_id or 0)
+        owner = int(owner_telegram_id or 0)
+    except Exception:
+        return False, 'Некорректные данные.'
+    if rid <= 0 or b <= 0 or owner <= 0:
+        return False, 'Некорректные данные.'
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id FROM partner_payout_requisites WHERE id = ? AND bot_id = ? AND owner_telegram_id = ?",
+                (rid, b, owner),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False, 'Реквизиты не найдены.'
+
+            cur.execute(
+                "UPDATE partner_payout_requisites SET is_default = 0 WHERE bot_id = ? AND owner_telegram_id = ?",
+                (b, owner),
+            )
+            cur.execute(
+                "UPDATE partner_payout_requisites SET is_default = 1 WHERE id = ?",
+                (rid,),
+            )
+            conn.commit()
+        return True, 'Основные реквизиты обновлены.'
+    except Exception as e:
+        logger.error(f"set_default_partner_requisite failed: {e}")
+        return False, 'Ошибка при обновлении.'
+
+
+def delete_partner_requisite(req_id: int, bot_id: int, owner_telegram_id: int) -> tuple[bool, str]:
+    """Delete a payout requisite."""
+    try:
+        rid = int(req_id or 0)
+        b = int(bot_id or 0)
+        owner = int(owner_telegram_id or 0)
+    except Exception:
+        return False, 'Некорректные данные.'
+    if rid <= 0 or b <= 0 or owner <= 0:
+        return False, 'Некорректные данные.'
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, is_default FROM partner_payout_requisites WHERE id = ? AND bot_id = ? AND owner_telegram_id = ?",
+                (rid, b, owner),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False, 'Реквизиты не найдены.'
+            was_default = int(row['is_default'] or 0) == 1
+
+            cur.execute(
+                "DELETE FROM partner_payout_requisites WHERE id = ? AND bot_id = ? AND owner_telegram_id = ?",
+                (rid, b, owner),
+            )
+
+            if was_default:
+                # Promote newest to default if any remains
+                cur.execute(
+                    "SELECT id FROM partner_payout_requisites WHERE bot_id = ? AND owner_telegram_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (b, owner),
+                )
+                row2 = cur.fetchone()
+                if row2:
+                    cur.execute(
+                        "UPDATE partner_payout_requisites SET is_default = 1 WHERE id = ?",
+                        (int(row2[0]),),
+                    )
+            conn.commit()
+        return True, 'Реквизиты удалены.'
+    except Exception as e:
+        logger.error(f"delete_partner_requisite failed: {e}")
+        return False, 'Ошибка при удалении.'
+
+
+def create_withdraw_request(
+    bot_id: int,
+    owner_telegram_id: int,
+    amount_rub: float,
+    comment: str | None = None,
+    *,
+    bank: str | None = None,
+    requisite_type: str | None = None,
+    requisite_value: str | None = None,
+    requisite_id: int | None = None,
+) -> tuple[bool, str]:
+    """Create a partner withdraw request.
+
+    Enforces minimum (1500 RUB) and available balance.
+    """
+    try:
+        b = int(bot_id or 0)
+        owner = int(owner_telegram_id or 0)
+        amt = float(amount_rub)
+    except Exception:
+        return False, "Некорректные данные."
+
+    if b <= 0:
+        return False, "Вывод доступен только во клонах."
+
+    if amt < FRANCHISE_MIN_WITHDRAW_RUB:
+        return False, f"Минимальная сумма вывода: {FRANCHISE_MIN_WITHDRAW_RUB:.0f} RUB."
+
+    stats = get_partner_cabinet(b)
+    available = float(stats.get("available", 0.0) or 0.0)
+    if amt > available + 1e-9:
+        return False, f"Недостаточно средств. Доступно: {available:.2f} RUB."
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO partner_withdraw_requests (bot_id, owner_telegram_id, amount_rub, status, comment, bank, requisite_type, requisite_value, requisite_id)
+                VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                """,
+                (b, owner, amt, (comment or None), (bank or None), (requisite_type or None), (requisite_value or None), (int(requisite_id) if requisite_id is not None else None)),
+            )
+            conn.commit()
+        return True, "Заявка на вывод создана и отправлена администратору."
+    except Exception as e:
+        logger.error(f"create_withdraw_request failed: {e}")
+        return False, "Ошибка при создании заявки."

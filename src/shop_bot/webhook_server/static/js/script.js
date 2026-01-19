@@ -1,5 +1,12 @@
 document.addEventListener('DOMContentLoaded', function () {
 
+    // Disable all background auto-updates by default to avoid UI "jumping".
+    // You can re-enable on a specific page by setting `window.disableAutoUpdate = false`
+    // BEFORE this script runs.
+    if (typeof window.disableAutoUpdate === 'undefined') {
+        window.disableAutoUpdate = true;
+    }
+
     function getCsrfToken(){
         const meta = document.querySelector('meta[name="csrf-token"]');
         return meta ? meta.getAttribute('content') : '';
@@ -406,14 +413,18 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         
 
-        setTimeout(() => {
-            setInterval(refreshCharts, 10000);
-        }, 1500);
+        if (!window.disableAutoUpdate) {
+            setTimeout(() => {
+                setInterval(refreshCharts, 10000);
+            }, 1500);
+        }
     }
 
     function initializeTicketAutoRefresh() {
         const root = document.getElementById('ticket-root');
         if (!root) return;
+
+        if (window.disableAutoUpdate) return;
 
         const ticketId = root.getAttribute('data-ticket-id');
         const chatBox = document.getElementById('chat-box');
@@ -1003,6 +1014,61 @@ document.addEventListener('DOMContentLoaded', function () {
         btnCancel.addEventListener('click', () => { input.value = orig.value; setMode(false); });
         row.addEventListener('submit', () => { orig.value = input.value; setMode(false); });
     });
+
+
+    // Mobile sidebar drawer (off-canvas)
+    function setupMobileSidebarDrawer() {
+        const burger = document.getElementById('burger');
+        const sidebar = document.querySelector('.sidebar');
+        if (!burger || !sidebar) return;
+
+        let overlay = document.getElementById('sidebar-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'sidebar-overlay';
+            overlay.className = 'sidebar-overlay';
+            document.body.appendChild(overlay);
+        }
+
+        function sync() {
+            document.body.classList.toggle('sidebar-open', !!burger.checked);
+        }
+
+        burger.addEventListener('change', sync);
+        overlay.addEventListener('click', function () {
+            burger.checked = false;
+            sync();
+        });
+
+        // Close drawer after navigation on small screens
+        sidebar.querySelectorAll('a.nav-link').forEach(function (a) {
+            a.addEventListener('click', function () {
+                if (window.matchMedia && window.matchMedia('(max-width: 992px)').matches) {
+                    burger.checked = false;
+                    sync();
+                }
+            });
+        });
+
+        window.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && burger.checked) {
+                burger.checked = false;
+                sync();
+            }
+        });
+
+        // If user rotates/resizes to desktop, ensure drawer is closed
+        window.addEventListener('resize', function () {
+            if (window.matchMedia && !window.matchMedia('(max-width: 992px)').matches && burger.checked) {
+                burger.checked = false;
+                sync();
+            }
+        });
+
+        sync();
+    }
+
+    setupMobileSidebarDrawer();
 });
 // Отключение автоматической перезагрузки
 (function() {

@@ -12,7 +12,7 @@ from shop_bot.data_manager.database import get_button_configs
 
 logger = logging.getLogger(__name__)
 
-SUPPORT_URL = "https://t.me/"
+SUPPORT_URL = (get_setting("chat_link")).strip()
 
 
 def _normalize_url(url: str) -> str:
@@ -50,11 +50,22 @@ main_reply_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: bool) -> InlineKeyboardMarkup:
+def create_main_menu_keyboard(
+    user_keys: list,
+    trial_available: bool,
+    is_admin: bool,
+    *,
+    show_create_bot: bool = True,
+    show_partner_cabinet: bool = False,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     if trial_available:
         builder.button(text=(get_setting("btn_trial_text") or "🎁 Попробовать бесплатно"), callback_data="get_trial")
+
+    # Franchise: partner cabinet button (shown only in managed clones for the owner)
+    if show_partner_cabinet:
+        builder.button(text="📊 Личный кабинет", callback_data="partner_cabinet")
     
     builder.button(text=(get_setting("btn_profile_text") or "👤 Мой профиль"), callback_data="show_profile")
 
@@ -77,6 +88,10 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
     builder.button(text=(get_setting("btn_topup_text") or "💳 Пополнить баланс"), callback_data="top_up_start")
     
     builder.button(text=(get_setting("btn_referral_text") or "🤝 Реферальная программа"), callback_data="show_referral_program")
+
+    # Franchise: create clone bot
+    if show_create_bot:
+        builder.button(text="🤖 Создать бота", callback_data="factory_create_bot")
     
 
     builder.button(text=(get_setting("btn_support_text") or "🆘 Поддержка"), callback_data="show_help")
@@ -97,9 +112,13 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
         buttons_total -= 1
     if is_admin:
         buttons_total -= 1
+    if show_partner_cabinet:
+        buttons_total -= 1
 
     layout: list[int] = []
     if trial_available:
+        layout.append(1)
+    if show_partner_cabinet:
         layout.append(1)
 
     if buttons_total > 0:
@@ -1254,10 +1273,71 @@ def create_admin_months_pick_keyboard(action: str = "gift") -> InlineKeyboardMar
     return builder.as_markup()
 
 
-def create_dynamic_keyboard(menu_type: str, user_keys: list = None, trial_available: bool = False, is_admin: bool = False) -> InlineKeyboardMarkup:
+def create_dynamic_keyboard(
+    menu_type: str,
+    user_keys: list = None,
+    trial_available: bool = False,
+    is_admin: bool = False,
+    *,
+    show_create_bot: bool = True,
+    show_partner_cabinet: bool = False,
+) -> InlineKeyboardMarkup:
     """Create a keyboard based on database configuration"""
     try:
         button_configs = get_button_configs(menu_type)
+
+        # === Franchise: inject buttons into main menu even when using dynamic config ===
+        if menu_type == "main_menu" and button_configs:
+            existing_callbacks = {cfg.get("callback_data") for cfg in button_configs}
+            try:
+                min_row = min(int(cfg.get("row_position", 0) or 0) for cfg in button_configs)
+                max_row = max(int(cfg.get("row_position", 0) or 0) for cfg in button_configs)
+            except Exception:
+                min_row = 0
+                max_row = 0
+
+            if show_partner_cabinet and "partner_cabinet" not in existing_callbacks:
+                button_configs = list(button_configs) + [
+                    {
+                        "button_id": "partner_cabinet",
+                        "text": "📊 Личный кабинет",
+                        "callback_data": "partner_cabinet",
+                        "url": None,
+                        "row_position": min_row - 1,
+                        "column_position": 0,
+                        "sort_order": -1000,
+                        "button_width": 2,
+                        "is_active": 1,
+                    }
+                ]
+
+            if show_create_bot and "factory_create_bot" not in existing_callbacks:
+                # Place the "Create bot" button ABOVE the "Admin" button (if it exists in config).
+                admin_rows: list[int] = []
+                for cfg in button_configs:
+                    cb = cfg.get("callback_data")
+                    bid = cfg.get("button_id")
+                    if cb == "admin_menu" or bid == "admin":
+                        try:
+                            admin_rows.append(int(cfg.get("row_position", 0) or 0))
+                        except Exception:
+                            pass
+
+                target_row = (min(admin_rows) - 1) if admin_rows else (max_row + 1)
+
+                button_configs = list(button_configs) + [
+                    {
+                        "button_id": "factory_create_bot",
+                        "text": "🤖 Создать бота",
+                        "callback_data": "factory_create_bot",
+                        "url": None,
+                        "row_position": target_row,
+                        "column_position": 0,
+                        "sort_order": 1000,
+                        "button_width": 1,
+                        "is_active": 1,
+                    }
+                ]
 
         # Группировка админ-меню:
         # - «Система» -> тест скорости / мониторинг / бэкап / восстановление
@@ -1349,7 +1429,13 @@ def create_dynamic_keyboard(menu_type: str, user_keys: list = None, trial_availa
             logger.warning(f"No button configs found for {menu_type}, using fallback")
 
             if menu_type == "main_menu":
-                return create_main_menu_keyboard(user_keys or [], trial_available, is_admin)
+                return create_main_menu_keyboard(
+                    user_keys or [],
+                    trial_available,
+                    is_admin,
+                    show_create_bot=show_create_bot,
+                    show_partner_cabinet=show_partner_cabinet,
+                )
             elif menu_type == "admin_menu":
                 return create_admin_menu_keyboard()
             elif menu_type == "profile_menu":
@@ -1462,9 +1548,23 @@ def create_dynamic_keyboard(menu_type: str, user_keys: list = None, trial_availa
         else:
             return create_back_to_menu_keyboard()
 
-def create_dynamic_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: bool) -> InlineKeyboardMarkup:
+def create_dynamic_main_menu_keyboard(
+    user_keys: list,
+    trial_available: bool,
+    is_admin: bool,
+    *,
+    show_create_bot: bool = True,
+    show_partner_cabinet: bool = False,
+) -> InlineKeyboardMarkup:
     """Create main menu keyboard using dynamic configuration"""
-    return create_dynamic_keyboard("main_menu", user_keys, trial_available, is_admin)
+    return create_dynamic_keyboard(
+        "main_menu",
+        user_keys,
+        trial_available,
+        is_admin,
+        show_create_bot=show_create_bot,
+        show_partner_cabinet=show_partner_cabinet,
+    )
 
 def create_dynamic_admin_menu_keyboard() -> InlineKeyboardMarkup:
     """Create admin menu keyboard using dynamic configuration"""
