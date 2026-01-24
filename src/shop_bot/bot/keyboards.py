@@ -12,7 +12,15 @@ from shop_bot.data_manager.database import get_button_configs
 
 logger = logging.getLogger(__name__)
 
-SUPPORT_URL =  (get_setting("support_bot_username") or get_setting("support_user") or "").strip()
+# Подключаем бота-поддержки из настроек, и заворачиваем в URL
+# Получаем "сырое" значение из настроек
+_raw_support = (get_setting("support_bot_username") or get_setting("support_user") or "").strip()
+
+# Если значение есть и оно не начинается с http/https/tg, добавляем префикс
+if _raw_support and not _raw_support.startswith(("http", "tg:")):
+    SUPPORT_URL = f"https://t.me/{_raw_support.lstrip('@')}"
+else:
+    SUPPORT_URL = _raw_support
 
 
 def _normalize_url(url: str) -> str:
