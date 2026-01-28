@@ -3561,10 +3561,8 @@ def get_user_router() -> Router:
             devices_connected = await _get_connected_devices_count(key_data, user_payload)
             plan_group, plan_name, device_limit = _get_tariff_info_for_key(key_data, user_payload)
             final_text = get_key_info_text(
+                key_data,
                 key_number,
-                expiry_date,
-                created_date,
-                connection_string,
                 devices_connected=devices_connected,
                 plan_group=plan_group,
                 plan_name=plan_name,
@@ -3696,10 +3694,8 @@ def get_user_router() -> Router:
                     devices_connected = await _get_connected_devices_count(updated_key, user_payload)
                     plan_group, plan_name, device_limit = _get_tariff_info_for_key(updated_key, user_payload)
                     final_text = get_key_info_text(
+                        updated_key,
                         key_number,
-                        expiry_date,
-                        created_date,
-                        connection_string,
                         devices_connected=devices_connected,
                         plan_group=plan_group,
                         plan_name=plan_name,
