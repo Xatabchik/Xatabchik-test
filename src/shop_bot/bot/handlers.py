@@ -1037,6 +1037,16 @@ def get_user_router() -> Router:
         username = message.from_user.username or message.from_user.full_name
         referrer_id = None
 
+        # Обрабатываем реферальную ссылку
+        if command.args and command.args.startswith('ref_'):
+            try:
+                potential_referrer_id = int(command.args.split('_')[1])
+                if potential_referrer_id != user_id:
+                    referrer_id = potential_referrer_id
+                    logger.info(f"Новый пользователь {user_id} пришел по реферальной ссылке от {referrer_id}")
+            except (IndexError, ValueError):
+                logger.warning(f"Получен неверный реферальный код: {command.args}")
+
         # Проверяем, нужна ли капча
         captcha_enabled = get_setting("captcha_enabled") == "true"
         user_exists = get_user(user_id) is not None
@@ -1046,6 +1056,9 @@ def get_user_router() -> Router:
             # НЕ регистрируем пользователя здесь - только показываем капчу
             # Регистрация произойдёт после успешного прохождения капчи
             
+            # Сохраняем реферальную информацию в FSM для последующей регистрации
+            await state.update_data(referred_by=referrer_id)
+            
             # Если капча уже пройдена ранее - пропускаем
             if not has_passed_captcha(user_id):
                 # Показываем капчу
@@ -1053,22 +1066,12 @@ def get_user_router() -> Router:
                 return
             # Если капча была пройдена ранее, продолжаем регистрацию
             # Зарегистрируем пользователя сейчас
-            register_user_if_not_exists(user_id, username, None)
+            register_user_if_not_exists(user_id, username, referrer_id)
         else:
             # Капча отключена или пользователь уже существует
-            register_user_if_not_exists(user_id, username, None)
+            register_user_if_not_exists(user_id, username, referrer_id)
 
-        if command.args and command.args.startswith('ref_'):
-            try:
-                potential_referrer_id = int(command.args.split('_')[1])
-                if potential_referrer_id != user_id:
-                    referrer_id = potential_referrer_id
-                    logger.info(f"Новый пользователь {user_id} пришел по реферальной ссылке от {referrer_id}")
-            except (IndexError, ValueError):
-                logger.warning(f"Получен неверный реферальный код: {command.args}")
-                
         _before = get_user(user_id)
-        register_user_if_not_exists(user_id, username, referrer_id)
         # Важно: +1 день за реферала начисляем только после того, как реферал активирует триал.
 
         user_id = message.from_user.id
@@ -1211,6 +1214,7 @@ def get_user_router() -> Router:
             data = await state.get_data()
             challenge_id = data.get("captcha_challenge_id")
             captcha_type = data.get("captcha_type", "math")
+            referred_by = data.get("referred_by")  # Получаем сохранённую реферальную информацию
             
             if not challenge_id:
                 await message.answer("❌ Сессия капчи истекла. Напишите /start для новой попытки.")
@@ -1226,8 +1230,9 @@ def get_user_router() -> Router:
                 await message.answer(msg)
                 
                 # 🔴 РЕГИСТРИРУЕМ ПОЛЬЗОВАТЕЛЯ в БД после успешного прохождения капчи
+                # Используем сохранённую реферальную информацию
                 username = message.from_user.username or message.from_user.full_name
-                register_user_if_not_exists(user_id, username, None)
+                register_user_if_not_exists(user_id, username, referred_by)
                 
                 # Продолжаем onboarding
                 await state.clear()
@@ -1283,6 +1288,7 @@ def get_user_router() -> Router:
         try:
             data = await state.get_data()
             challenge_id = data.get("captcha_challenge_id")
+            referred_by = data.get("referred_by")  # Получаем сохранённую реферальную информацию
             
             if not challenge_id:
                 await callback.answer("❌ Сессия капчи истекла. Напишите /start для новой попытки.", show_alert=True)
@@ -1297,8 +1303,9 @@ def get_user_router() -> Router:
                 await callback.answer(msg, show_alert=True)
                 
                 # 🔴 РЕГИСТРИРУЕМ ПОЛЬЗОВАТЕЛЯ в БД после успешного прохождения капчи
+                # Используем сохранённую реферальную информацию
                 username = callback.from_user.username or callback.from_user.full_name
-                register_user_if_not_exists(user_id, username, None)
+                register_user_if_not_exists(user_id, username, referred_by)
                 
                 # Продолжаем onboarding
                 await state.clear()
