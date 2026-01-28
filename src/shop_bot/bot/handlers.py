@@ -1043,14 +1043,20 @@ def get_user_router() -> Router:
         
         # Капча нужна только новым пользователям при первой регистрации
         if captcha_enabled and not user_exists:
-            # Сначала регистрируем пользователя (без согласия с условиями)
-            register_user_if_not_exists(user_id, username, None)
+            # НЕ регистрируем пользователя здесь - только показываем капчу
+            # Регистрация произойдёт после успешного прохождения капчи
             
-            # Если капча уже пройдена - пропускаем
+            # Если капча уже пройдена ранее - пропускаем
             if not has_passed_captcha(user_id):
                 # Показываем капчу
                 await show_captcha(message, state, user_id)
                 return
+            # Если капча была пройдена ранее, продолжаем регистрацию
+            # Зарегистрируем пользователя сейчас
+            register_user_if_not_exists(user_id, username, None)
+        else:
+            # Капча отключена или пользователь уже существует
+            register_user_if_not_exists(user_id, username, None)
 
         if command.args and command.args.startswith('ref_'):
             try:
@@ -1219,6 +1225,10 @@ def get_user_router() -> Router:
                 mark_user_passed_captcha(user_id, challenge_id)
                 await message.answer(msg)
                 
+                # 🔴 РЕГИСТРИРУЕМ ПОЛЬЗОВАТЕЛЯ в БД после успешного прохождения капчи
+                username = message.from_user.username or message.from_user.full_name
+                register_user_if_not_exists(user_id, username, None)
+                
                 # Продолжаем onboarding
                 await state.clear()
                 
@@ -1285,6 +1295,10 @@ def get_user_router() -> Router:
                 # Капча пройдена
                 mark_user_passed_captcha(user_id, challenge_id)
                 await callback.answer(msg, show_alert=True)
+                
+                # 🔴 РЕГИСТРИРУЕМ ПОЛЬЗОВАТЕЛЯ в БД после успешного прохождения капчи
+                username = callback.from_user.username or callback.from_user.full_name
+                register_user_if_not_exists(user_id, username, None)
                 
                 # Продолжаем onboarding
                 await state.clear()
